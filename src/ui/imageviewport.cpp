@@ -19,11 +19,23 @@ ImageViewport::ImageViewport(QWidget *parent)
 
 void ImageViewport::setImage(const QImage &image)
 {
+    const bool preserveView = !fitToWindow_ && !image_.isNull() && !image.isNull();
+    const QPointF anchorImagePoint = preserveView ? widgetToImage(viewportCenter()) : QPointF();
+
     image_ = image;
-    panOffset_ = {};
     if (fitToWindow_) {
         zoomToFit();
     } else {
+        if (preserveView) {
+            const QSizeF scaledSize = scaledImageSize();
+            const QPointF centeredTopLeft((width() - scaledSize.width()) / 2.0,
+                                          (height() - scaledSize.height()) / 2.0);
+            const double scale = effectiveScale();
+            panOffset_ = viewportCenter() - centeredTopLeft
+                         - QPointF(anchorImagePoint.x() * scale, anchorImagePoint.y() * scale);
+        } else {
+            panOffset_ = {};
+        }
         clampPanOffset();
         update();
         emit zoomChanged(effectiveScale(), fitToWindow_);
@@ -234,6 +246,11 @@ QRectF ImageViewport::imageRect() const
     const QSizeF scaledSize = scaledImageSize();
     const QPointF topLeft((width() - scaledSize.width()) / 2.0, (height() - scaledSize.height()) / 2.0);
     return QRectF(topLeft + panOffset_, scaledSize);
+}
+
+QPointF ImageViewport::viewportCenter() const
+{
+    return QPointF(width() / 2.0, height() / 2.0);
 }
 
 bool ImageViewport::isPointInsideImage(const QPointF &widgetPoint) const

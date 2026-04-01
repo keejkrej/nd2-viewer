@@ -42,6 +42,7 @@ private:
     [[nodiscard]] double effectiveScale() const;
     [[nodiscard]] QSizeF scaledImageSize() const;
     [[nodiscard]] QRectF imageRect() const;
+    [[nodiscard]] QPointF viewportCenter() const;
     [[nodiscard]] bool isPointInsideImage(const QPointF &widgetPoint) const;
     [[nodiscard]] QPointF imageToWidget(const QPointF &imagePoint) const;
     [[nodiscard]] QPointF widgetToImage(const QPointF &widgetPoint) const;

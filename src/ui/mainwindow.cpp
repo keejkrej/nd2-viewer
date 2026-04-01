@@ -5,13 +5,11 @@
 
 #include <QAction>
 #include <QDir>
-#include <QDockWidget>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFormLayout>
-#include <QGroupBox>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -30,7 +28,8 @@
 #include <QStatusBar>
 #include <QStandardPaths>
 #include <QTabWidget>
-#include <QTextBrowser>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QToolBar>
 #include <QVBoxLayout>
 
@@ -43,88 +42,141 @@ namespace
 QString prettyJson(const QJsonDocument &document)
 {
     if (document.isNull()) {
-        return QStringLiteral("{}");
+        return QStringLiteral("null");
     }
     return QString::fromUtf8(document.toJson(QJsonDocument::Indented));
 }
 
-QString scalarToString(const QJsonValue &value)
+QJsonValue documentValue(const QJsonDocument &document)
+{
+    if (document.isArray()) {
+        return QJsonValue(document.array());
+    }
+    if (document.isObject()) {
+        return QJsonValue(document.object());
+    }
+    return QJsonValue(QJsonValue::Null);
+}
+
+QString scalarToDisplayString(const QJsonValue &value)
 {
     if (value.isString()) {
-        return value.toString().toHtmlEscaped();
+        return value.toString();
     }
     if (value.isDouble()) {
-        return QString::number(value.toDouble());
+        return QString::number(value.toDouble(), 'g', 15);
     }
     if (value.isBool()) {
         return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     }
-    if (value.isNull() || value.isUndefined()) {
-        return QStringLiteral("<i>null</i>");
+    if (value.isNull()) {
+        return QStringLiteral("null");
     }
-    return QStringLiteral("<i>complex</i>");
+    if (value.isUndefined()) {
+        return QStringLiteral("undefined");
+    }
+    return QString();
 }
 
-QString jsonSummaryHtml(const QJsonValue &value, int depth = 0)
+QString containerSummary(const QJsonValue &value)
 {
-    if (depth > 4) {
-        return QStringLiteral("<i>…</i>");
+    if (value.isObject()) {
+        return QStringLiteral("{%1 field%2}")
+            .arg(value.toObject().size())
+            .arg(value.toObject().size() == 1 ? QString() : QStringLiteral("s"));
     }
+    if (value.isArray()) {
+        return QStringLiteral("[%1 item%2]")
+            .arg(value.toArray().size())
+            .arg(value.toArray().size() == 1 ? QString() : QStringLiteral("s"));
+    }
+    return scalarToDisplayString(value);
+}
+
+void populateJsonTreeItem(QTreeWidgetItem *parent, const QString &key, const QJsonValue &value)
+{
+    auto *item = new QTreeWidgetItem(parent);
+    item->setText(0, key);
+    item->setText(1, containerSummary(value));
 
     if (value.isObject()) {
         const QJsonObject object = value.toObject();
-        QString html = QStringLiteral("<table cellspacing='0' cellpadding='4'>");
-        int shown = 0;
-        for (auto it = object.begin(); it != object.end(); ++it) {
-            if (shown++ >= 24) {
-                html += QStringLiteral("<tr><td colspan='2'><i>More fields omitted…</i></td></tr>");
-                break;
-            }
-            html += QStringLiteral("<tr><td valign='top'><b>%1</b></td><td>%2</td></tr>")
-                        .arg(it.key().toHtmlEscaped(), jsonSummaryHtml(it.value(), depth + 1));
+        if (object.isEmpty()) {
+            auto *emptyItem = new QTreeWidgetItem(item);
+            emptyItem->setText(0, QStringLiteral("(empty object)"));
+            emptyItem->setText(1, QStringLiteral("{}"));
+            return;
         }
-        html += QStringLiteral("</table>");
-        return html;
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            populateJsonTreeItem(item, it.key(), it.value());
+        }
+        return;
     }
 
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
-        QString html = QStringLiteral("<ol>");
-        const int count = std::min(static_cast<int>(array.size()), 12);
-        for (int index = 0; index < count; ++index) {
-            html += QStringLiteral("<li>%1</li>").arg(jsonSummaryHtml(array.at(index), depth + 1));
+        if (array.isEmpty()) {
+            auto *emptyItem = new QTreeWidgetItem(item);
+            emptyItem->setText(0, QStringLiteral("(empty array)"));
+            emptyItem->setText(1, QStringLiteral("[]"));
+            return;
         }
-        if (array.size() > count) {
-            html += QStringLiteral("<li><i>More items omitted…</i></li>");
+        for (int index = 0; index < array.size(); ++index) {
+            populateJsonTreeItem(item, QStringLiteral("[%1]").arg(index), array.at(index));
         }
-        html += QStringLiteral("</ol>");
-        return html;
     }
-
-    return scalarToString(value);
 }
 
-QString documentOverviewHtml(const Nd2DocumentInfo &info)
+void populateJsonTree(QTreeWidget *tree, const QJsonValue &value)
 {
-    QString html;
-    html += QStringLiteral("<h3>Overview</h3>");
-    html += QStringLiteral("<table cellspacing='0' cellpadding='4'>");
-    html += QStringLiteral("<tr><td><b>File</b></td><td>%1</td></tr>").arg(QFileInfo(info.filePath).fileName().toHtmlEscaped());
-    html += QStringLiteral("<tr><td><b>Size</b></td><td>%1 × %2</td></tr>").arg(info.frameSize.width()).arg(info.frameSize.height());
-    html += QStringLiteral("<tr><td><b>Frames</b></td><td>%1</td></tr>").arg(info.sequenceCount);
-    html += QStringLiteral("<tr><td><b>Components</b></td><td>%1</td></tr>").arg(info.componentCount);
-    html += QStringLiteral("<tr><td><b>Pixel type</b></td><td>%1</td></tr>").arg(info.pixelDataType.toHtmlEscaped());
-    html += QStringLiteral("</table>");
-    if (!info.loops.isEmpty()) {
-        html += QStringLiteral("<h3>Loops</h3><ul>");
-        for (const Nd2LoopInfo &loop : info.loops) {
-            html += QStringLiteral("<li><b>%1</b> (%2): %3 steps</li>")
-                        .arg(loop.label.toHtmlEscaped(), loop.type.toHtmlEscaped())
-                        .arg(loop.size);
+    tree->clear();
+
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        if (object.isEmpty()) {
+            auto *item = new QTreeWidgetItem(tree);
+            item->setText(0, QStringLiteral("(empty object)"));
+            item->setText(1, QStringLiteral("{}"));
+        } else {
+            for (auto it = object.begin(); it != object.end(); ++it) {
+                populateJsonTreeItem(tree->invisibleRootItem(), it.key(), it.value());
+            }
         }
-        html += QStringLiteral("</ul>");
+    } else if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        if (array.isEmpty()) {
+            auto *item = new QTreeWidgetItem(tree);
+            item->setText(0, QStringLiteral("(empty array)"));
+            item->setText(1, QStringLiteral("[]"));
+        } else {
+            for (int index = 0; index < array.size(); ++index) {
+                populateJsonTreeItem(tree->invisibleRootItem(), QStringLiteral("[%1]").arg(index), array.at(index));
+            }
+        }
+    } else {
+        auto *item = new QTreeWidgetItem(tree);
+        item->setText(0, QStringLiteral("value"));
+        item->setText(1, scalarToDisplayString(value));
     }
-    return html;
+
+    tree->collapseAll();
+    tree->expandToDepth(0);
+}
+
+void addOverviewTreeRow(QTreeWidget *tree, const QString &key, const QString &value)
+{
+    auto *item = new QTreeWidgetItem(tree);
+    item->setText(0, key);
+    item->setText(1, value);
+}
+
+QLabel *createSectionTitle(const QString &title, QWidget *parent)
+{
+    auto *label = new QLabel(title, parent);
+    QFont font = label->font();
+    font.setBold(true);
+    label->setFont(font);
+    return label;
 }
 
 void clearLayout(QLayout *layout)
@@ -157,7 +209,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     buildCentralUi();
     buildMenus();
-    buildDockUi();
 
     infoStatusLabel_ = new QLabel(this);
     zoomStatusLabel_ = new QLabel(tr("Fit"), this);
@@ -325,21 +376,16 @@ void MainWindow::updateMetadataUi()
 {
     const Nd2DocumentInfo &info = controller_.documentInfo();
 
-    const QString attributesSummary = documentOverviewHtml(info) + jsonSummaryHtml(info.attributesJson.object());
-    setMetadataContent(attributesWidgets_, attributesSummary, prettyJson(info.attributesJson));
-
-    const QString experimentSummary = jsonSummaryHtml(info.experimentJson.isArray() ? QJsonValue(info.experimentJson.array())
-                                                                                   : QJsonValue(info.experimentJson.object()));
-    setMetadataContent(experimentWidgets_, experimentSummary, prettyJson(info.experimentJson));
+    setOverviewContent(info);
+    setMetadataContent(attributesWidgets_, documentValue(info.attributesJson), prettyJson(info.attributesJson));
+    setMetadataContent(experimentWidgets_, documentValue(info.experimentJson), prettyJson(info.experimentJson));
 
     const QJsonDocument metadataDoc = controller_.currentFrameMetadata().isNull() ? info.metadataJson : controller_.currentFrameMetadata();
-    const QString metadataSummary = QStringLiteral("<h3>Current Frame Metadata</h3>") + jsonSummaryHtml(metadataDoc.object());
     const QString metadataRaw = controller_.currentFrameMetadataText().isEmpty() ? prettyJson(info.metadataJson)
                                                                                  : controller_.currentFrameMetadataText();
-    setMetadataContent(metadataWidgets_, metadataSummary, metadataRaw);
+    setMetadataContent(metadataWidgets_, documentValue(metadataDoc), metadataRaw);
 
-    const QString textInfoSummary = jsonSummaryHtml(info.textInfoJson.object());
-    setMetadataContent(textInfoWidgets_, textInfoSummary, prettyJson(info.textInfoJson));
+    setMetadataContent(textInfoWidgets_, documentValue(info.textInfoJson), prettyJson(info.textInfoJson));
 }
 
 void MainWindow::showErrorMessage(const QString &message)
@@ -408,16 +454,24 @@ void MainWindow::buildMenus()
 void MainWindow::buildCentralUi()
 {
     auto *central = new QWidget(this);
-    auto *layout = new QVBoxLayout(central);
+    auto *layout = new QHBoxLayout(central);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
-    auto *navigatorGroup = new QGroupBox(tr("Navigation"), central);
-    auto *navigatorGroupLayout = new QVBoxLayout(navigatorGroup);
-    navigatorGroupLayout->setContentsMargins(8, 8, 8, 8);
-    navigatorGroupLayout->setSpacing(6);
+    auto *mainSplitter = new QSplitter(Qt::Horizontal, central);
 
-    auto *navigatorScrollArea = new QScrollArea(navigatorGroup);
+    auto *viewerPane = new QWidget(mainSplitter);
+    auto *viewerLayout = new QVBoxLayout(viewerPane);
+    viewerLayout->setContentsMargins(0, 0, 0, 0);
+    viewerLayout->setSpacing(8);
+
+    auto *navigationSection = new QWidget(viewerPane);
+    auto *navigationLayout = new QVBoxLayout(navigationSection);
+    navigationLayout->setContentsMargins(0, 0, 0, 0);
+    navigationLayout->setSpacing(4);
+    navigationLayout->addWidget(createSectionTitle(tr("Navigation"), navigationSection));
+
+    auto *navigatorScrollArea = new QScrollArea(navigationSection);
     navigatorScrollArea->setWidgetResizable(true);
     navigatorContainer_ = new QWidget(navigatorScrollArea);
     navigatorRowsLayout_ = new QVBoxLayout(navigatorContainer_);
@@ -428,30 +482,69 @@ void MainWindow::buildCentralUi()
     navigatorRowsLayout_->addWidget(navigatorEmptyLabel_);
     navigatorRowsLayout_->addStretch(1);
     navigatorScrollArea->setWidget(navigatorContainer_);
-    navigatorGroupLayout->addWidget(navigatorScrollArea);
+    navigationLayout->addWidget(navigatorScrollArea);
 
-    imageViewport_ = new ImageViewport(central);
+    imageViewport_ = new ImageViewport(viewerPane);
 
-    layout->addWidget(navigatorGroup, 0);
-    layout->addWidget(imageViewport_, 1);
-    setCentralWidget(central);
-}
+    viewerLayout->addWidget(navigationSection, 0);
+    viewerLayout->addWidget(imageViewport_, 1);
 
-void MainWindow::buildDockUi()
-{
-    auto *channelsDock = new QDockWidget(tr("Channels"), this);
-    channelControlsWidget_ = new ChannelControlsWidget(channelsDock);
-    channelsDock->setWidget(channelControlsWidget_);
-    addDockWidget(Qt::RightDockWidgetArea, channelsDock);
+    auto *sidebarPane = new QWidget(mainSplitter);
+    sidebarPane->setMinimumWidth(320);
+    auto *sidebarLayout = new QVBoxLayout(sidebarPane);
+    sidebarLayout->setContentsMargins(0, 0, 0, 0);
+    sidebarLayout->setSpacing(8);
 
-    auto *metadataDock = new QDockWidget(tr("Metadata"), this);
-    metadataTabs_ = new QTabWidget(metadataDock);
+    metadataOverviewTree_ = new QTreeWidget(sidebarPane);
+    metadataOverviewTree_->setColumnCount(2);
+    metadataOverviewTree_->setHeaderLabels({tr("Key"), tr("Value")});
+    metadataOverviewTree_->setRootIsDecorated(true);
+    metadataOverviewTree_->setUniformRowHeights(true);
+    metadataOverviewTree_->setAlternatingRowColors(true);
+    metadataOverviewTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    metadataOverviewTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    metadataOverviewTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+
+    auto *overviewSection = new QWidget(sidebarPane);
+    auto *overviewLayout = new QVBoxLayout(overviewSection);
+    overviewLayout->setContentsMargins(0, 0, 0, 0);
+    overviewLayout->setSpacing(4);
+    overviewLayout->addWidget(createSectionTitle(tr("Overview"), overviewSection));
+    overviewLayout->addWidget(metadataOverviewTree_);
+
+    channelControlsWidget_ = new ChannelControlsWidget(sidebarPane);
+    auto *channelsSection = new QWidget(sidebarPane);
+    auto *channelsLayout = new QVBoxLayout(channelsSection);
+    channelsLayout->setContentsMargins(0, 0, 0, 0);
+    channelsLayout->setSpacing(4);
+    channelsLayout->addWidget(createSectionTitle(tr("Channels"), channelsSection));
+    channelsLayout->addWidget(channelControlsWidget_);
+
+    metadataTabs_ = new QTabWidget(sidebarPane);
     attributesWidgets_ = addMetadataTab(tr("Attributes"));
     experimentWidgets_ = addMetadataTab(tr("Experiment"));
     metadataWidgets_ = addMetadataTab(tr("Metadata"));
     textInfoWidgets_ = addMetadataTab(tr("Text Info"));
-    metadataDock->setWidget(metadataTabs_);
-    addDockWidget(Qt::RightDockWidgetArea, metadataDock);
+
+    auto *metadataSection = new QWidget(sidebarPane);
+    auto *metadataLayout = new QVBoxLayout(metadataSection);
+    metadataLayout->setContentsMargins(0, 0, 0, 0);
+    metadataLayout->setSpacing(4);
+    metadataLayout->addWidget(createSectionTitle(tr("Metadata"), metadataSection));
+    metadataLayout->addWidget(metadataTabs_);
+
+    sidebarLayout->addWidget(overviewSection, 0);
+    sidebarLayout->addWidget(channelsSection, 0);
+    sidebarLayout->addWidget(metadataSection, 1);
+
+    mainSplitter->addWidget(viewerPane);
+    mainSplitter->addWidget(sidebarPane);
+    mainSplitter->setStretchFactor(0, 1);
+    mainSplitter->setStretchFactor(1, 0);
+    mainSplitter->setSizes({1000, 380});
+
+    layout->addWidget(mainSplitter, 1);
+    setCentralWidget(central);
 }
 
 void MainWindow::rebuildNavigatorControls()
@@ -528,26 +621,76 @@ MainWindow::MetadataWidgets MainWindow::addMetadataTab(const QString &title)
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
+    MetadataWidgets widgets;
     auto *splitter = new QSplitter(Qt::Vertical, page);
-    auto *summary = new QTextBrowser(splitter);
-    summary->setOpenExternalLinks(false);
+    auto *tree = new QTreeWidget(splitter);
+    tree->setColumnCount(2);
+    tree->setHeaderLabels({tr("Key"), tr("Value")});
+    tree->setRootIsDecorated(true);
+    tree->setUniformRowHeights(true);
+    tree->setAlternatingRowColors(true);
+    tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     auto *raw = new QPlainTextEdit(splitter);
     raw->setReadOnly(true);
 
-    splitter->addWidget(summary);
+    splitter->addWidget(tree);
     splitter->addWidget(raw);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 3);
     layout->addWidget(splitter);
 
     metadataTabs_->addTab(page, title);
-    return {summary, raw};
+    widgets.tree = tree;
+    widgets.raw = raw;
+    return widgets;
 }
 
-void MainWindow::setMetadataContent(const MetadataWidgets &widgets, const QString &summaryHtml, const QString &rawText)
+void MainWindow::setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText)
 {
-    widgets.summary->setHtml(summaryHtml.isEmpty() ? QStringLiteral("<i>No data available.</i>") : summaryHtml);
+    populateJsonTree(widgets.tree, jsonValue);
     widgets.raw->setPlainText(rawText);
+}
+
+void MainWindow::setOverviewContent(const Nd2DocumentInfo &info)
+{
+    if (!metadataOverviewTree_) {
+        return;
+    }
+
+    metadataOverviewTree_->clear();
+
+    const QString fileName = controller_.hasDocument()
+                                 ? QFileInfo(info.filePath).fileName()
+                                 : tr("No file loaded");
+    addOverviewTreeRow(metadataOverviewTree_, tr("File"), fileName);
+    addOverviewTreeRow(metadataOverviewTree_,
+                       tr("Size"),
+                       QStringLiteral("%1 × %2").arg(info.frameSize.width()).arg(info.frameSize.height()));
+    addOverviewTreeRow(metadataOverviewTree_, tr("Frames"), QString::number(info.sequenceCount));
+    addOverviewTreeRow(metadataOverviewTree_, tr("Components"), QString::number(info.componentCount));
+    addOverviewTreeRow(metadataOverviewTree_,
+                       tr("Pixel Type"),
+                       info.pixelDataType.isEmpty() ? tr("Unknown") : info.pixelDataType);
+
+    auto *loopsItem = new QTreeWidgetItem(metadataOverviewTree_);
+    loopsItem->setText(0, tr("Loops"));
+    if (info.loops.isEmpty()) {
+        loopsItem->setText(1, tr("Single frame"));
+    } else {
+        loopsItem->setText(1, QStringLiteral("[%1 item%2]")
+                                  .arg(info.loops.size())
+                                  .arg(info.loops.size() == 1 ? QString() : QStringLiteral("s")));
+        for (const Nd2LoopInfo &loop : info.loops) {
+            auto *loopItem = new QTreeWidgetItem(loopsItem);
+            loopItem->setText(0, loop.label);
+            loopItem->setText(1, QStringLiteral("%1, %2 steps").arg(loop.type, QString::number(loop.size)));
+        }
+    }
+
+    metadataOverviewTree_->collapseAll();
+    metadataOverviewTree_->expandToDepth(0);
 }
 
 MainWindow::ExportMode MainWindow::promptForExportMode() const

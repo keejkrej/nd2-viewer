@@ -11,7 +11,7 @@ class QPlainTextEdit;
 class QSlider;
 class QSpinBox;
 class QTabWidget;
-class QTextBrowser;
+class QTreeWidget;
 class QVBoxLayout;
 
 class MainWindow : public QMainWindow
@@ -65,16 +65,16 @@ private:
 
     struct MetadataWidgets
     {
-        QTextBrowser *summary = nullptr;
+        QTreeWidget *tree = nullptr;
         QPlainTextEdit *raw = nullptr;
     };
 
     void buildMenus();
     void buildCentralUi();
-    void buildDockUi();
     void rebuildNavigatorControls();
     MetadataWidgets addMetadataTab(const QString &title);
-    void setMetadataContent(const MetadataWidgets &widgets, const QString &summaryHtml, const QString &rawText);
+    void setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText);
+    void setOverviewContent(const Nd2DocumentInfo &info);
     [[nodiscard]] ExportMode promptForExportMode() const;
     [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath, ExportMode mode) const;
     [[nodiscard]] bool writeChannelTiff(const QString &path,
@@ -93,6 +93,7 @@ private:
     QLabel *navigatorEmptyLabel_ = nullptr;
     QVector<LoopWidgets> loopControls_;
     ChannelControlsWidget *channelControlsWidget_ = nullptr;
+    QTreeWidget *metadataOverviewTree_ = nullptr;
     QTabWidget *metadataTabs_ = nullptr;
     MetadataWidgets attributesWidgets_;
     MetadataWidgets experimentWidgets_;

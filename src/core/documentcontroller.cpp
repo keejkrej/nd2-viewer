@@ -93,6 +93,11 @@ const RenderedFrame &DocumentController::renderedFrame() const
     return renderedFrame_;
 }
 
+const RawFrame &DocumentController::currentRawFrame() const
+{
+    return currentRawFrame_;
+}
+
 QString DocumentController::currentFrameMetadataText() const
 {
     return currentFrameMetadataText_;

@@ -24,6 +24,7 @@ public:
     [[nodiscard]] const FrameCoordinateState &coordinateState() const;
     [[nodiscard]] const QVector<ChannelRenderSettings> &channelSettings() const;
     [[nodiscard]] const RenderedFrame &renderedFrame() const;
+    [[nodiscard]] const RawFrame &currentRawFrame() const;
     [[nodiscard]] QString currentFrameMetadataText() const;
     [[nodiscard]] QJsonDocument currentFrameMetadata() const;
     [[nodiscard]] QString pixelInfoAt(const QPoint &pixelPosition) const;

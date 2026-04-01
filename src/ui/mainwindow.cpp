@@ -4,7 +4,10 @@
 #include "ui/imageviewport.h"
 
 #include <QAction>
+#include <QDir>
 #include <QDockWidget>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -18,15 +21,22 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextBrowser>
 #include <QToolBar>
 #include <QVBoxLayout>
+
+#include <tiffio.h>
+
+#include <cstring>
 
 namespace
 {
@@ -167,6 +177,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(imageViewport_, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updateHoveredPixel);
     connect(imageViewport_, &ImageViewport::zoomChanged, this, &MainWindow::updateZoomLabel);
+    connect(imageViewport_, &ImageViewport::saveImageRequested, this, &MainWindow::saveCurrentFrameAs);
 
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
             &controller_, &DocumentController::setChannelSettings);
@@ -191,6 +202,88 @@ void MainWindow::openFile()
     }
 
     controller_.openFile(fileName);
+}
+
+void MainWindow::saveCurrentFrameAs()
+{
+    const QImage currentImage = controller_.renderedFrame().image;
+    const RawFrame &rawFrame = controller_.currentRawFrame();
+    if (currentImage.isNull() || !rawFrame.isValid()) {
+        return;
+    }
+
+    const ExportMode mode = promptForExportMode();
+    if (mode == ExportMode::Cancelled) {
+        return;
+    }
+
+    QString selectedPath;
+    QString dialogTitle;
+    QString dialogFilter;
+
+    switch (mode) {
+    case ExportMode::PreviewPng:
+        dialogTitle = tr("Save Rendered Preview");
+        dialogFilter = tr("PNG Image (*.png)");
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".png")), dialogFilter);
+        break;
+    case ExportMode::AnalysisTiffs:
+        dialogTitle = tr("Choose Base Name for Analysis TIFFs");
+        dialogFilter = tr("TIFF Image (*.tif)");
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".tif")), dialogFilter);
+        break;
+    case ExportMode::Bundle:
+        dialogTitle = tr("Save Rendered Preview and Channel TIFFs");
+        dialogFilter = tr("PNG Image (*.png)");
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".png")), dialogFilter);
+        break;
+    case ExportMode::Cancelled:
+        break;
+    }
+
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo targetInfo(selectedPath);
+    if (targetInfo.suffix().isEmpty()) {
+        selectedPath += (mode == ExportMode::AnalysisTiffs) ? QStringLiteral(".tif") : QStringLiteral(".png");
+        targetInfo = QFileInfo(selectedPath);
+    }
+
+    const ExportBundleResult exportResult = exportCurrentFrame(selectedPath, mode);
+    if (exportResult.previewRequested && !exportResult.previewSaved) {
+        QMessageBox::warning(this,
+                             tr("Export Failed"),
+                             tr("Could not save the rendered preview to:\n%1").arg(QDir::toNativeSeparators(selectedPath)));
+        return;
+    }
+
+    if (!exportResult.failures.isEmpty()) {
+        QMessageBox::warning(this,
+                             tr("Export Partially Failed"),
+                             tr("Saved the preview PNG, but some channel TIFFs failed:\n\n%1")
+                                 .arg(exportResult.failures.join(QStringLiteral("\n"))));
+    }
+
+    QString statusMessage;
+    switch (mode) {
+    case ExportMode::PreviewPng:
+        statusMessage = tr("Exported rendered preview PNG");
+        break;
+    case ExportMode::AnalysisTiffs:
+        statusMessage = tr("Exported %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
+        break;
+    case ExportMode::Bundle:
+        statusMessage = tr("Exported preview PNG and %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
+        break;
+    case ExportMode::Cancelled:
+        break;
+    }
+
+    if (!statusMessage.isEmpty()) {
+        statusBar()->showMessage(statusMessage, 5000);
+    }
 }
 
 void MainWindow::updateDocumentUi()
@@ -455,6 +548,207 @@ void MainWindow::setMetadataContent(const MetadataWidgets &widgets, const QStrin
 {
     widgets.summary->setHtml(summaryHtml.isEmpty() ? QStringLiteral("<i>No data available.</i>") : summaryHtml);
     widgets.raw->setPlainText(rawText);
+}
+
+MainWindow::ExportMode MainWindow::promptForExportMode() const
+{
+    QDialog dialog(const_cast<MainWindow *>(this));
+    dialog.setWindowTitle(tr("Export Current Frame"));
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *introLabel = new QLabel(tr("Choose what to export for the current frame."), &dialog);
+    introLabel->setWordWrap(true);
+
+    auto *previewButton = new QRadioButton(tr("Rendered Preview (.png)"), &dialog);
+    auto *analysisButton = new QRadioButton(tr("Analysis Channels (.tif)"), &dialog);
+    auto *bundleButton = new QRadioButton(tr("Export Bundle (Recommended)"), &dialog);
+    bundleButton->setChecked(true);
+
+    auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    layout->addWidget(introLabel);
+    layout->addWidget(previewButton);
+    layout->addWidget(analysisButton);
+    layout->addWidget(bundleButton);
+    layout->addWidget(buttonBox);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return ExportMode::Cancelled;
+    }
+
+    if (previewButton->isChecked()) {
+        return ExportMode::PreviewPng;
+    }
+    if (analysisButton->isChecked()) {
+        return ExportMode::AnalysisTiffs;
+    }
+    return ExportMode::Bundle;
+}
+
+MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &selectedPath, ExportMode mode) const
+{
+    ExportBundleResult result;
+
+    const QImage previewImage = controller_.renderedFrame().image;
+    const RawFrame &rawFrame = controller_.currentRawFrame();
+    if (previewImage.isNull() || !rawFrame.isValid()) {
+        result.failures << tr("No current frame is available.");
+        return result;
+    }
+
+    const bool shouldSavePreview = mode == ExportMode::PreviewPng || mode == ExportMode::Bundle;
+    const bool shouldSaveChannels = mode == ExportMode::AnalysisTiffs || mode == ExportMode::Bundle;
+    result.previewRequested = shouldSavePreview;
+
+    if (shouldSavePreview) {
+        if (!previewImage.save(selectedPath)) {
+            result.failures << tr("Preview PNG: %1").arg(QDir::toNativeSeparators(selectedPath));
+            return result;
+        }
+
+        result.previewSaved = true;
+        result.previewPath = selectedPath;
+    }
+
+    if (shouldSaveChannels) {
+        const QFileInfo exportInfo(selectedPath);
+        const QString baseStem = exportInfo.completeBaseName();
+        const QDir outputDir = exportInfo.dir();
+        const Nd2DocumentInfo &info = controller_.documentInfo();
+        const int channelCount = qMax(rawFrame.components, 1);
+
+        for (int channelIndex = 0; channelIndex < channelCount; ++channelIndex) {
+            QString channelLabel = QStringLiteral("C%1").arg(channelIndex + 1);
+            if (channelIndex < info.channels.size() && !info.channels.at(channelIndex).name.isEmpty()) {
+                channelLabel += QStringLiteral("_") + sanitizeToken(info.channels.at(channelIndex).name);
+            }
+
+            const QString channelPath = outputDir.filePath(QStringLiteral("%1_%2.tif").arg(baseStem, channelLabel));
+            QString errorMessage;
+            if (!writeChannelTiff(channelPath, rawFrame, channelIndex, &errorMessage)) {
+                result.failures << tr("Channel %1: %2").arg(channelIndex + 1).arg(errorMessage);
+                continue;
+            }
+
+            result.channelPaths << channelPath;
+        }
+    }
+
+    return result;
+}
+
+bool MainWindow::writeChannelTiff(const QString &path,
+                                  const RawFrame &frame,
+                                  int channelIndex,
+                                  QString *errorMessage) const
+{
+    if (!frame.isValid()) {
+        if (errorMessage) {
+            *errorMessage = tr("No raw frame data is available.");
+        }
+        return false;
+    }
+
+    if (channelIndex < 0 || channelIndex >= qMax(frame.components, 1)) {
+        if (errorMessage) {
+            *errorMessage = tr("Channel index %1 is out of range.").arg(channelIndex);
+        }
+        return false;
+    }
+
+    TIFF *tiff = TIFFOpenW(reinterpret_cast<const wchar_t *>(path.utf16()), "w");
+    if (!tiff) {
+        if (errorMessage) {
+            *errorMessage = tr("Could not open %1 for writing.").arg(QDir::toNativeSeparators(path));
+        }
+        return false;
+    }
+
+    const uint16 bitsPerSample = static_cast<uint16>(frame.bitsPerComponent);
+    const uint16 sampleFormat = frame.pixelDataType.compare(QStringLiteral("float"), Qt::CaseInsensitive) == 0
+                                    ? SAMPLEFORMAT_IEEEFP
+                                    : SAMPLEFORMAT_UINT;
+    const tsize_t rowBytes = static_cast<tsize_t>(frame.width * frame.bytesPerComponent());
+
+    TIFFSetField(tiff, TIFFTAG_IMAGEWIDTH, static_cast<uint32>(frame.width));
+    TIFFSetField(tiff, TIFFTAG_IMAGELENGTH, static_cast<uint32>(frame.height));
+    TIFFSetField(tiff, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tiff, TIFFTAG_BITSPERSAMPLE, bitsPerSample);
+    TIFFSetField(tiff, TIFFTAG_SAMPLEFORMAT, sampleFormat);
+    TIFFSetField(tiff, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tiff, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tiff, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+    TIFFSetField(tiff, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+    TIFFSetField(tiff, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize(tiff, rowBytes));
+
+    QByteArray rowBuffer(static_cast<qsizetype>(rowBytes), Qt::Uninitialized);
+    const int bytesPerComponent = frame.bytesPerComponent();
+    const int actualChannelIndex = frame.components == 1 ? 0 : channelIndex;
+    const char *frameData = frame.data.constData();
+
+    for (int y = 0; y < frame.height; ++y) {
+        char *rowDestination = rowBuffer.data();
+        const char *rowSource = frameData + static_cast<qsizetype>(y) * frame.bytesPerLine;
+        for (int x = 0; x < frame.width; ++x) {
+            const qsizetype sourceOffset = static_cast<qsizetype>((x * frame.components + actualChannelIndex) * bytesPerComponent);
+            std::memcpy(rowDestination + static_cast<qsizetype>(x) * bytesPerComponent,
+                        rowSource + sourceOffset,
+                        static_cast<size_t>(bytesPerComponent));
+        }
+
+        if (TIFFWriteScanline(tiff, rowBuffer.data(), static_cast<uint32>(y), 0) < 0) {
+            TIFFClose(tiff);
+            if (errorMessage) {
+                *errorMessage = tr("TIFF write failed for %1.").arg(QDir::toNativeSeparators(path));
+            }
+            return false;
+        }
+    }
+
+    TIFFClose(tiff);
+    return true;
+}
+
+QString MainWindow::buildDefaultFrameSavePath(const QString &extension) const
+{
+    QString directory;
+    QString baseName = QStringLiteral("frame");
+
+    if (controller_.hasDocument()) {
+        const QFileInfo sourceInfo(controller_.currentPath());
+        directory = sourceInfo.absolutePath();
+        if (!sourceInfo.completeBaseName().isEmpty()) {
+            baseName = sourceInfo.completeBaseName();
+        }
+    }
+
+    if (directory.isEmpty()) {
+        directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    }
+    if (directory.isEmpty()) {
+        directory = QDir::homePath();
+    }
+
+    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const FrameCoordinateState &coordinates = controller_.coordinateState();
+    QStringList nameParts{sanitizeToken(baseName)};
+    for (int index = 0; index < info.loops.size() && index < coordinates.values.size(); ++index) {
+        const QString label = sanitizeToken(info.loops.at(index).label);
+        nameParts << QStringLiteral("%1%2").arg(label, QString::number(coordinates.values.at(index) + 1));
+    }
+
+    return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + extension);
+}
+
+QString MainWindow::sanitizeToken(const QString &value) const
+{
+    QString sanitized = value;
+    sanitized.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]+")), QStringLiteral("_"));
+    sanitized.replace(QRegularExpression(QStringLiteral("_+")), QStringLiteral("_"));
+    sanitized.remove(QRegularExpression(QStringLiteral("^_+|_+$")));
+    return sanitized.isEmpty() ? QStringLiteral("frame") : sanitized;
 }
 
 void MainWindow::updateWindowTitle()

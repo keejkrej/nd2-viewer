@@ -70,10 +70,21 @@ if(ND2VIEWER_USE_SHARED_SDK)
     IMPORTED_IMPLIB "${ND2SDK_ROOT}/lib/nd2readsdk-shared.lib"
     IMPORTED_LOCATION "${ND2SDK_ROOT}/bin/nd2readsdk-shared.dll"
   )
+
+  add_library(ND2ReadSdk::Tiff SHARED IMPORTED GLOBAL)
+  set_target_properties(ND2ReadSdk::Tiff PROPERTIES
+    IMPORTED_IMPLIB "${ND2SDK_ROOT}/lib/tiff.lib"
+    IMPORTED_LOCATION "${ND2SDK_ROOT}/bin/tiff.dll"
+  )
 else()
   add_library(ND2ReadSdk::Reader STATIC IMPORTED GLOBAL)
   set_target_properties(ND2ReadSdk::Reader PROPERTIES
     IMPORTED_LOCATION "${ND2SDK_ROOT}/lib/nd2readsdk-static.lib"
+  )
+
+  add_library(ND2ReadSdk::Tiff STATIC IMPORTED GLOBAL)
+  set_target_properties(ND2ReadSdk::Tiff PROPERTIES
+    IMPORTED_LOCATION "${ND2SDK_ROOT}/lib/tiff.lib"
   )
 endif()
 
@@ -82,6 +93,7 @@ target_link_libraries(nd2-viewer
     Qt6::Concurrent
     Qt6::Widgets
     ND2ReadSdk::Reader
+    ND2ReadSdk::Tiff
 )
 
 if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)

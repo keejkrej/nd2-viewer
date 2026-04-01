@@ -23,6 +23,7 @@ public:
 
 private slots:
     void openFile();
+    void saveCurrentFrameAs();
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -35,6 +36,23 @@ private slots:
     void updateZoomLabel(double zoomFactor, bool fitToWindow);
 
 private:
+    enum class ExportMode
+    {
+        Cancelled,
+        PreviewPng,
+        AnalysisTiffs,
+        Bundle
+    };
+
+    struct ExportBundleResult
+    {
+        bool previewRequested = false;
+        bool previewSaved = false;
+        QString previewPath;
+        QStringList channelPaths;
+        QStringList failures;
+    };
+
     struct LoopWidgets
     {
         QWidget *row = nullptr;
@@ -57,6 +75,14 @@ private:
     void rebuildNavigatorControls();
     MetadataWidgets addMetadataTab(const QString &title);
     void setMetadataContent(const MetadataWidgets &widgets, const QString &summaryHtml, const QString &rawText);
+    [[nodiscard]] ExportMode promptForExportMode() const;
+    [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath, ExportMode mode) const;
+    [[nodiscard]] bool writeChannelTiff(const QString &path,
+                                        const RawFrame &frame,
+                                        int channelIndex,
+                                        QString *errorMessage) const;
+    [[nodiscard]] QString buildDefaultFrameSavePath(const QString &extension = QStringLiteral(".png")) const;
+    [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();
 

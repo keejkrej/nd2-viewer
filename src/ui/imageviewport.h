@@ -25,8 +25,10 @@ public:
 signals:
     void hoveredPixelChanged(const QPoint &pixelPosition, bool insideImage);
     void zoomChanged(double zoomFactor, bool fitToWindow);
+    void saveImageRequested();
 
 protected:
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
@@ -40,6 +42,7 @@ private:
     [[nodiscard]] double effectiveScale() const;
     [[nodiscard]] QSizeF scaledImageSize() const;
     [[nodiscard]] QRectF imageRect() const;
+    [[nodiscard]] bool isPointInsideImage(const QPointF &widgetPoint) const;
     [[nodiscard]] QPointF imageToWidget(const QPointF &imagePoint) const;
     [[nodiscard]] QPointF widgetToImage(const QPointF &widgetPoint) const;
     void clampPanOffset();

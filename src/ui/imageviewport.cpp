@@ -1,5 +1,7 @@
 #include "ui/imageviewport.h"
 
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -73,6 +75,22 @@ double ImageViewport::zoomFactor() const
 bool ImageViewport::isFitToWindow() const
 {
     return fitToWindow_;
+}
+
+void ImageViewport::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!hasImage() || !isPointInsideImage(event->pos())) {
+        event->ignore();
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *saveAction = menu.addAction(tr("Export Current Frame..."));
+    QAction *chosenAction = menu.exec(event->globalPos());
+    if (chosenAction == saveAction) {
+        emit saveImageRequested();
+    }
+    event->accept();
 }
 
 void ImageViewport::paintEvent(QPaintEvent *event)
@@ -216,6 +234,17 @@ QRectF ImageViewport::imageRect() const
     const QSizeF scaledSize = scaledImageSize();
     const QPointF topLeft((width() - scaledSize.width()) / 2.0, (height() - scaledSize.height()) / 2.0);
     return QRectF(topLeft + panOffset_, scaledSize);
+}
+
+bool ImageViewport::isPointInsideImage(const QPointF &widgetPoint) const
+{
+    if (image_.isNull()) {
+        return false;
+    }
+
+    const QPointF imagePoint = widgetToImage(widgetPoint);
+    return imagePoint.x() >= 0.0 && imagePoint.y() >= 0.0
+           && imagePoint.x() < image_.width() && imagePoint.y() < image_.height();
 }
 
 QPointF ImageViewport::imageToWidget(const QPointF &imagePoint) const

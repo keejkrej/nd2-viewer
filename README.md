@@ -26,6 +26,22 @@ The easiest path is:
 
 The helper script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
 
+### Build a Windows installer
+
+To produce a Windows installer, build a release tree and package it with CPack:
+
+```powershell
+.\scripts\package-msvc.ps1
+```
+
+That script builds into `build-msvc-release` by default and writes the package into `dist`.
+
+Installer notes:
+
+- The default generator is `NSIS`, which produces a standard `.exe` installer.
+- `makensis.exe` must be on `PATH` for the NSIS package to be created.
+- If you want a portable archive instead, run `.\scripts\package-msvc.ps1 -Generator ZIP`.
+
 ### Manual MSVC build
 
 If you want to run the steps yourself:
@@ -40,6 +56,9 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 
 - `CMakeLists.txt` copies the ND2 SDK runtime DLLs after build.
 - If `windeployqt` is available from the selected Qt kit, it is run automatically after build.
+- CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
+- The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.
 - `scripts/build-msvc.ps1` is the intended day-to-day build entrypoint on this machine.
+- `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project now supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.

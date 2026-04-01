@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(nd2-viewer VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -96,6 +98,11 @@ target_link_libraries(nd2-viewer
     ND2ReadSdk::Tiff
 )
 
+install(TARGETS nd2-viewer
+  RUNTIME DESTINATION "."
+  COMPONENT Runtime
+)
+
 if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
   file(GLOB ND2_SDK_DLLS "${ND2SDK_ROOT}/bin/*.dll")
   foreach(nd2_sdk_dll IN LISTS ND2_SDK_DLLS)
@@ -126,3 +133,53 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
   endif()
 
 endif()
+
+install(
+  DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/"
+  DESTINATION "."
+  COMPONENT Runtime
+  PATTERN "nd2-viewer.exe" EXCLUDE
+  PATTERN "*.ilk" EXCLUDE
+  PATTERN "*.pdb" EXCLUDE
+)
+
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+  DESTINATION "."
+  COMPONENT Runtime
+)
+
+if(WIN32 AND MSVC)
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+  include(InstallRequiredSystemLibraries)
+  if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+      DESTINATION "."
+      COMPONENT Runtime
+    )
+  endif()
+endif()
+
+set(CPACK_MONOLITHIC_INSTALL ON)
+set(CPACK_PACKAGE_VENDOR "nd2-viewer contributors")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Qt 6 desktop viewer for Nikon ND2 microscopy files")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "nd2-viewer")
+set(CPACK_PACKAGE_EXECUTABLES "nd2-viewer" "nd2-viewer")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+
+if(WIN32)
+  set(CPACK_GENERATOR "NSIS")
+  set(CPACK_NSIS_DISPLAY_NAME "nd2-viewer")
+  set(CPACK_NSIS_PACKAGE_NAME "nd2-viewer")
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "nd2-viewer.exe")
+  set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+  set(CPACK_NSIS_MODIFY_PATH OFF)
+  set(CPACK_NSIS_MUI_FINISHPAGE_RUN "nd2-viewer.exe")
+  set(CPACK_NSIS_CREATE_ICONS_EXTRA
+    "CreateShortCut '$DESKTOP\\\\nd2-viewer.lnk' '$INSTDIR\\\\nd2-viewer.exe'"
+  )
+  set(CPACK_NSIS_DELETE_ICONS_EXTRA
+    "Delete '$DESKTOP\\\\nd2-viewer.lnk'"
+  )
+endif()
+
+include(CPack)

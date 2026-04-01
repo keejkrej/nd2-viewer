@@ -30,7 +30,6 @@
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
-#include <QToolBar>
 #include <QVBoxLayout>
 
 #include <tiffio.h>
@@ -229,6 +228,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(imageViewport_, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updateHoveredPixel);
     connect(imageViewport_, &ImageViewport::zoomChanged, this, &MainWindow::updateZoomLabel);
     connect(imageViewport_, &ImageViewport::saveImageRequested, this, &MainWindow::saveCurrentFrameAs);
+    connect(imageViewport_, &ImageViewport::exportRoiRequested, this, &MainWindow::saveCurrentRoiAs);
 
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
             &controller_, &DocumentController::setChannelSettings);
@@ -257,13 +257,26 @@ void MainWindow::openFile()
 
 void MainWindow::saveCurrentFrameAs()
 {
+    exportCurrentSelection(ExportScope::Frame);
+}
+
+void MainWindow::saveCurrentRoiAs()
+{
+    exportCurrentSelection(ExportScope::Roi);
+}
+
+void MainWindow::exportCurrentSelection(ExportScope scope)
+{
     const QImage currentImage = controller_.renderedFrame().image;
     const RawFrame &rawFrame = controller_.currentRawFrame();
     if (currentImage.isNull() || !rawFrame.isValid()) {
         return;
     }
+    if (scope == ExportScope::Roi && !imageViewport_->hasRoi()) {
+        return;
+    }
 
-    const ExportMode mode = promptForExportMode();
+    const ExportMode mode = promptForExportMode(scope);
     if (mode == ExportMode::Cancelled) {
         return;
     }
@@ -271,22 +284,23 @@ void MainWindow::saveCurrentFrameAs()
     QString selectedPath;
     QString dialogTitle;
     QString dialogFilter;
+    const QString scopeLabel = scope == ExportScope::Roi ? tr("ROI") : tr("Frame");
 
     switch (mode) {
     case ExportMode::PreviewPng:
-        dialogTitle = tr("Save Rendered Preview");
+        dialogTitle = tr("Save Rendered %1 Preview").arg(scopeLabel);
         dialogFilter = tr("PNG Image (*.png)");
-        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".png")), dialogFilter);
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(scope, QStringLiteral(".png")), dialogFilter);
         break;
     case ExportMode::AnalysisTiffs:
-        dialogTitle = tr("Choose Base Name for Analysis TIFFs");
+        dialogTitle = tr("Choose Base Name for %1 Analysis TIFFs").arg(scopeLabel);
         dialogFilter = tr("TIFF Image (*.tif)");
-        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".tif")), dialogFilter);
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(scope, QStringLiteral(".tif")), dialogFilter);
         break;
     case ExportMode::Bundle:
-        dialogTitle = tr("Save Rendered Preview and Channel TIFFs");
+        dialogTitle = tr("Save Rendered %1 Preview and Channel TIFFs").arg(scopeLabel);
         dialogFilter = tr("PNG Image (*.png)");
-        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(QStringLiteral(".png")), dialogFilter);
+        selectedPath = QFileDialog::getSaveFileName(this, dialogTitle, buildDefaultFrameSavePath(scope, QStringLiteral(".png")), dialogFilter);
         break;
     case ExportMode::Cancelled:
         break;
@@ -302,31 +316,37 @@ void MainWindow::saveCurrentFrameAs()
         targetInfo = QFileInfo(selectedPath);
     }
 
-    const ExportBundleResult exportResult = exportCurrentFrame(selectedPath, mode);
+    const ExportBundleResult exportResult = exportCurrentFrame(selectedPath, mode, scope);
     if (exportResult.previewRequested && !exportResult.previewSaved) {
         QMessageBox::warning(this,
                              tr("Export Failed"),
-                             tr("Could not save the rendered preview to:\n%1").arg(QDir::toNativeSeparators(selectedPath)));
+                             tr("Could not save the rendered %1 preview to:\n%2")
+                                 .arg(scope == ExportScope::Roi ? tr("ROI") : tr("frame"),
+                                      QDir::toNativeSeparators(selectedPath)));
         return;
     }
 
     if (!exportResult.failures.isEmpty()) {
         QMessageBox::warning(this,
                              tr("Export Partially Failed"),
-                             tr("Saved the preview PNG, but some channel TIFFs failed:\n\n%1")
+                             tr("Some %1 export files could not be saved:\n\n%2")
+                                 .arg(scope == ExportScope::Roi ? tr("ROI") : tr("frame"))
                                  .arg(exportResult.failures.join(QStringLiteral("\n"))));
     }
 
     QString statusMessage;
     switch (mode) {
     case ExportMode::PreviewPng:
-        statusMessage = tr("Exported rendered preview PNG");
+        statusMessage = scope == ExportScope::Roi ? tr("Exported ROI preview PNG")
+                                                  : tr("Exported rendered preview PNG");
         break;
     case ExportMode::AnalysisTiffs:
-        statusMessage = tr("Exported %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
+        statusMessage = scope == ExportScope::Roi ? tr("Exported %1 ROI channel TIFF(s)").arg(exportResult.channelPaths.size())
+                                                  : tr("Exported %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
         break;
     case ExportMode::Bundle:
-        statusMessage = tr("Exported preview PNG and %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
+        statusMessage = scope == ExportScope::Roi ? tr("Exported ROI preview PNG and %1 channel TIFF(s)").arg(exportResult.channelPaths.size())
+                                                  : tr("Exported preview PNG and %1 channel TIFF(s)").arg(exportResult.channelPaths.size());
         break;
     case ExportMode::Cancelled:
         break;
@@ -339,6 +359,8 @@ void MainWindow::saveCurrentFrameAs()
 
 void MainWindow::updateDocumentUi()
 {
+    imageViewport_->clearRoi();
+    imageViewport_->setImage(controller_.renderedFrame().image);
     rebuildNavigatorControls();
     channelControlsWidget_->setChannels(controller_.documentInfo().channels, controller_.channelSettings());
     updateCoordinateUi();
@@ -449,6 +471,14 @@ void MainWindow::buildMenus()
     auto *actualSizeAction = viewMenu->addAction(tr("Actual Size"));
     actualSizeAction->setShortcut(tr("Ctrl+1"));
     connect(actualSizeAction, &QAction::triggered, imageViewport_, &ImageViewport::setActualSize);
+
+    auto *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    auto *drawRoiAction = toolsMenu->addAction(tr("Draw ROI"));
+    drawRoiAction->setCheckable(true);
+    connect(drawRoiAction, &QAction::toggled, this, [this](bool checked) {
+        imageViewport_->setInteractionMode(checked ? ImageViewport::InteractionMode::DrawRoi
+                                                   : ImageViewport::InteractionMode::Pan);
+    });
 }
 
 void MainWindow::buildCentralUi()
@@ -693,13 +723,16 @@ void MainWindow::setOverviewContent(const Nd2DocumentInfo &info)
     metadataOverviewTree_->expandToDepth(0);
 }
 
-MainWindow::ExportMode MainWindow::promptForExportMode() const
+MainWindow::ExportMode MainWindow::promptForExportMode(ExportScope scope) const
 {
     QDialog dialog(const_cast<MainWindow *>(this));
-    dialog.setWindowTitle(tr("Export Current Frame"));
+    dialog.setWindowTitle(scope == ExportScope::Roi ? tr("Export Current ROI") : tr("Export Current Frame"));
 
     auto *layout = new QVBoxLayout(&dialog);
-    auto *introLabel = new QLabel(tr("Choose what to export for the current frame."), &dialog);
+    auto *introLabel = new QLabel(scope == ExportScope::Roi
+                                      ? tr("Choose what to export for the current ROI.")
+                                      : tr("Choose what to export for the current frame."),
+                                  &dialog);
     introLabel->setWordWrap(true);
 
     auto *previewButton = new QRadioButton(tr("Rendered Preview (.png)"), &dialog);
@@ -730,7 +763,9 @@ MainWindow::ExportMode MainWindow::promptForExportMode() const
     return ExportMode::Bundle;
 }
 
-MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &selectedPath, ExportMode mode) const
+MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &selectedPath,
+                                                             ExportMode mode,
+                                                             ExportScope scope) const
 {
     ExportBundleResult result;
 
@@ -741,12 +776,22 @@ MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &sel
         return result;
     }
 
+    QRect cropRect;
+    if (scope == ExportScope::Roi) {
+        cropRect = imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height));
+        if (!cropRect.isValid() || cropRect.isEmpty()) {
+            result.failures << tr("No ROI is currently available.");
+            return result;
+        }
+    }
+
     const bool shouldSavePreview = mode == ExportMode::PreviewPng || mode == ExportMode::Bundle;
     const bool shouldSaveChannels = mode == ExportMode::AnalysisTiffs || mode == ExportMode::Bundle;
     result.previewRequested = shouldSavePreview;
 
     if (shouldSavePreview) {
-        if (!previewImage.save(selectedPath)) {
+        const QImage imageToSave = scope == ExportScope::Roi ? previewImage.copy(cropRect) : previewImage;
+        if (imageToSave.isNull() || !imageToSave.save(selectedPath)) {
             result.failures << tr("Preview PNG: %1").arg(QDir::toNativeSeparators(selectedPath));
             return result;
         }
@@ -770,7 +815,7 @@ MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &sel
 
             const QString channelPath = outputDir.filePath(QStringLiteral("%1_%2.tif").arg(baseStem, channelLabel));
             QString errorMessage;
-            if (!writeChannelTiff(channelPath, rawFrame, channelIndex, &errorMessage)) {
+            if (!writeChannelTiff(channelPath, rawFrame, channelIndex, &errorMessage, cropRect)) {
                 result.failures << tr("Channel %1: %2").arg(channelIndex + 1).arg(errorMessage);
                 continue;
             }
@@ -785,7 +830,8 @@ MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &sel
 bool MainWindow::writeChannelTiff(const QString &path,
                                   const RawFrame &frame,
                                   int channelIndex,
-                                  QString *errorMessage) const
+                                  QString *errorMessage,
+                                  const QRect &cropRect) const
 {
     if (!frame.isValid()) {
         if (errorMessage) {
@@ -797,6 +843,16 @@ bool MainWindow::writeChannelTiff(const QString &path,
     if (channelIndex < 0 || channelIndex >= qMax(frame.components, 1)) {
         if (errorMessage) {
             *errorMessage = tr("Channel index %1 is out of range.").arg(channelIndex);
+        }
+        return false;
+    }
+
+    const QRect sourceRect = cropRect.isValid() && !cropRect.isEmpty()
+                                 ? cropRect.intersected(QRect(0, 0, frame.width, frame.height))
+                                 : QRect(0, 0, frame.width, frame.height);
+    if (!sourceRect.isValid() || sourceRect.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("The ROI is outside the current frame.");
         }
         return false;
     }
@@ -813,10 +869,12 @@ bool MainWindow::writeChannelTiff(const QString &path,
     const uint16 sampleFormat = frame.pixelDataType.compare(QStringLiteral("float"), Qt::CaseInsensitive) == 0
                                     ? SAMPLEFORMAT_IEEEFP
                                     : SAMPLEFORMAT_UINT;
-    const tsize_t rowBytes = static_cast<tsize_t>(frame.width * frame.bytesPerComponent());
+    const int outputWidth = sourceRect.width();
+    const int outputHeight = sourceRect.height();
+    const tsize_t rowBytes = static_cast<tsize_t>(outputWidth * frame.bytesPerComponent());
 
-    TIFFSetField(tiff, TIFFTAG_IMAGEWIDTH, static_cast<uint32>(frame.width));
-    TIFFSetField(tiff, TIFFTAG_IMAGELENGTH, static_cast<uint32>(frame.height));
+    TIFFSetField(tiff, TIFFTAG_IMAGEWIDTH, static_cast<uint32>(outputWidth));
+    TIFFSetField(tiff, TIFFTAG_IMAGELENGTH, static_cast<uint32>(outputHeight));
     TIFFSetField(tiff, TIFFTAG_SAMPLESPERPIXEL, 1);
     TIFFSetField(tiff, TIFFTAG_BITSPERSAMPLE, bitsPerSample);
     TIFFSetField(tiff, TIFFTAG_SAMPLEFORMAT, sampleFormat);
@@ -831,11 +889,13 @@ bool MainWindow::writeChannelTiff(const QString &path,
     const int actualChannelIndex = frame.components == 1 ? 0 : channelIndex;
     const char *frameData = frame.data.constData();
 
-    for (int y = 0; y < frame.height; ++y) {
+    for (int y = 0; y < outputHeight; ++y) {
         char *rowDestination = rowBuffer.data();
-        const char *rowSource = frameData + static_cast<qsizetype>(y) * frame.bytesPerLine;
-        for (int x = 0; x < frame.width; ++x) {
-            const qsizetype sourceOffset = static_cast<qsizetype>((x * frame.components + actualChannelIndex) * bytesPerComponent);
+        const int sourceY = sourceRect.y() + y;
+        const char *rowSource = frameData + static_cast<qsizetype>(sourceY) * frame.bytesPerLine;
+        for (int x = 0; x < outputWidth; ++x) {
+            const int sourceX = sourceRect.x() + x;
+            const qsizetype sourceOffset = static_cast<qsizetype>((sourceX * frame.components + actualChannelIndex) * bytesPerComponent);
             std::memcpy(rowDestination + static_cast<qsizetype>(x) * bytesPerComponent,
                         rowSource + sourceOffset,
                         static_cast<size_t>(bytesPerComponent));
@@ -854,7 +914,7 @@ bool MainWindow::writeChannelTiff(const QString &path,
     return true;
 }
 
-QString MainWindow::buildDefaultFrameSavePath(const QString &extension) const
+QString MainWindow::buildDefaultFrameSavePath(ExportScope scope, const QString &extension) const
 {
     QString directory;
     QString baseName = QStringLiteral("frame");
@@ -880,6 +940,14 @@ QString MainWindow::buildDefaultFrameSavePath(const QString &extension) const
     for (int index = 0; index < info.loops.size() && index < coordinates.values.size(); ++index) {
         const QString label = sanitizeToken(info.loops.at(index).label);
         nameParts << QStringLiteral("%1%2").arg(label, QString::number(coordinates.values.at(index) + 1));
+    }
+    if (scope == ExportScope::Roi && imageViewport_->hasRoi()) {
+        const QRect roi = imageViewport_->roiRect();
+        nameParts << QStringLiteral("roi_x%1_y%2_w%3_h%4")
+                         .arg(roi.x())
+                         .arg(roi.y())
+                         .arg(roi.width())
+                         .arg(roi.height());
     }
 
     return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + extension);

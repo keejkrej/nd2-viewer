@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QPoint>
 #include <QPointF>
+#include <QRect>
 #include <QWidget>
 
 class ImageViewport : public QWidget
@@ -10,6 +11,12 @@ class ImageViewport : public QWidget
     Q_OBJECT
 
 public:
+    enum class InteractionMode
+    {
+        Pan,
+        DrawRoi
+    };
+
     explicit ImageViewport(QWidget *parent = nullptr);
 
     void setImage(const QImage &image);
@@ -21,11 +28,19 @@ public:
     void setZoomFactor(double zoomFactor);
     [[nodiscard]] double zoomFactor() const;
     [[nodiscard]] bool isFitToWindow() const;
+    void setInteractionMode(InteractionMode mode);
+    [[nodiscard]] InteractionMode interactionMode() const;
+    [[nodiscard]] bool hasRoi() const;
+    [[nodiscard]] QRect roiRect() const;
+    void clearRoi();
 
 signals:
     void hoveredPixelChanged(const QPoint &pixelPosition, bool insideImage);
     void zoomChanged(double zoomFactor, bool fitToWindow);
     void saveImageRequested();
+    void roiChanged(const QRect &roiRect);
+    void roiPresenceChanged(bool hasRoi);
+    void exportRoiRequested();
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -46,12 +61,23 @@ private:
     [[nodiscard]] bool isPointInsideImage(const QPointF &widgetPoint) const;
     [[nodiscard]] QPointF imageToWidget(const QPointF &imagePoint) const;
     [[nodiscard]] QPointF widgetToImage(const QPointF &widgetPoint) const;
+    [[nodiscard]] QPointF clampedImagePoint(const QPointF &widgetPoint) const;
+    [[nodiscard]] QRectF currentDragImageRect() const;
+    [[nodiscard]] QRectF widgetRectForImageRect(const QRectF &imageRect) const;
+    [[nodiscard]] QRect normalizedRoiRect(const QRectF &imageRect) const;
     void clampPanOffset();
+    void setRoiRectInternal(const QRect &roiRect);
+    void updateCursor();
 
     QImage image_;
     double zoomFactor_ = 1.0;
     bool fitToWindow_ = true;
     QPointF panOffset_;
+    InteractionMode interactionMode_ = InteractionMode::Pan;
     bool panning_ = false;
+    bool drawingRoi_ = false;
     QPoint lastMousePosition_;
+    QRect roiRect_;
+    QPointF roiDragStartImage_;
+    QPointF roiDragCurrentImage_;
 };

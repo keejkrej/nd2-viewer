@@ -3,7 +3,9 @@
 #include "core/documentcontroller.h"
 
 #include <QMainWindow>
+#include <QRect>
 
+class QAction;
 class ChannelControlsWidget;
 class ImageViewport;
 class QLabel;
@@ -24,6 +26,7 @@ public:
 private slots:
     void openFile();
     void saveCurrentFrameAs();
+    void saveCurrentRoiAs();
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -36,6 +39,12 @@ private slots:
     void updateZoomLabel(double zoomFactor, bool fitToWindow);
 
 private:
+    enum class ExportScope
+    {
+        Frame,
+        Roi
+    };
+
     enum class ExportMode
     {
         Cancelled,
@@ -71,17 +80,22 @@ private:
 
     void buildMenus();
     void buildCentralUi();
+    void exportCurrentSelection(ExportScope scope);
     void rebuildNavigatorControls();
     MetadataWidgets addMetadataTab(const QString &title);
     void setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText);
     void setOverviewContent(const Nd2DocumentInfo &info);
-    [[nodiscard]] ExportMode promptForExportMode() const;
-    [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath, ExportMode mode) const;
+    [[nodiscard]] ExportMode promptForExportMode(ExportScope scope) const;
+    [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath,
+                                                       ExportMode mode,
+                                                       ExportScope scope) const;
     [[nodiscard]] bool writeChannelTiff(const QString &path,
                                         const RawFrame &frame,
                                         int channelIndex,
-                                        QString *errorMessage) const;
-    [[nodiscard]] QString buildDefaultFrameSavePath(const QString &extension = QStringLiteral(".png")) const;
+                                        QString *errorMessage,
+                                        const QRect &cropRect = QRect()) const;
+    [[nodiscard]] QString buildDefaultFrameSavePath(ExportScope scope,
+                                                    const QString &extension = QStringLiteral(".png")) const;
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();

@@ -5,9 +5,16 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPen>
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
+
+namespace
+{
+constexpr double kMinRoiDimension = 1.0;
+}
 
 ImageViewport::ImageViewport(QWidget *parent)
     : QWidget(parent)
@@ -15,6 +22,7 @@ ImageViewport::ImageViewport(QWidget *parent)
     setMouseTracking(true);
     setMinimumSize(320, 240);
     setFocusPolicy(Qt::StrongFocus);
+    updateCursor();
 }
 
 void ImageViewport::setImage(const QImage &image)
@@ -40,6 +48,17 @@ void ImageViewport::setImage(const QImage &image)
         update();
         emit zoomChanged(effectiveScale(), fitToWindow_);
     }
+
+    if (image_.isNull()) {
+        setRoiRectInternal({});
+    } else if (roiRect_.isValid() && !roiRect_.isEmpty()) {
+        setRoiRectInternal(roiRect_.intersected(QRect(0, 0, image_.width(), image_.height())));
+    }
+
+    if (drawingRoi_ && !hasImage()) {
+        drawingRoi_ = false;
+    }
+    updateCursor();
 }
 
 const QImage &ImageViewport::image() const
@@ -89,6 +108,40 @@ bool ImageViewport::isFitToWindow() const
     return fitToWindow_;
 }
 
+void ImageViewport::setInteractionMode(InteractionMode mode)
+{
+    if (interactionMode_ == mode) {
+        return;
+    }
+
+    interactionMode_ = mode;
+    if (interactionMode_ != InteractionMode::DrawRoi) {
+        drawingRoi_ = false;
+    }
+    updateCursor();
+    update();
+}
+
+ImageViewport::InteractionMode ImageViewport::interactionMode() const
+{
+    return interactionMode_;
+}
+
+bool ImageViewport::hasRoi() const
+{
+    return roiRect_.isValid() && !roiRect_.isEmpty();
+}
+
+QRect ImageViewport::roiRect() const
+{
+    return roiRect_;
+}
+
+void ImageViewport::clearRoi()
+{
+    setRoiRectInternal({});
+}
+
 void ImageViewport::contextMenuEvent(QContextMenuEvent *event)
 {
     if (!hasImage() || !isPointInsideImage(event->pos())) {
@@ -98,9 +151,14 @@ void ImageViewport::contextMenuEvent(QContextMenuEvent *event)
 
     QMenu menu(this);
     QAction *saveAction = menu.addAction(tr("Export Current Frame..."));
+    QAction *exportRoiAction = menu.addAction(tr("Export Current ROI..."));
+    exportRoiAction->setEnabled(hasRoi());
+
     QAction *chosenAction = menu.exec(event->globalPos());
     if (chosenAction == saveAction) {
         emit saveImageRequested();
+    } else if (chosenAction == exportRoiAction) {
+        emit exportRoiRequested();
     }
     event->accept();
 }
@@ -124,6 +182,21 @@ void ImageViewport::paintEvent(QPaintEvent *event)
 
     painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0));
     painter.drawRect(targetRect);
+
+    QRectF roiImageRect;
+    if (drawingRoi_) {
+        roiImageRect = currentDragImageRect();
+    } else if (hasRoi()) {
+        roiImageRect = QRectF(roiRect_.x(), roiRect_.y(), roiRect_.width(), roiRect_.height());
+    }
+
+    if (roiImageRect.width() >= kMinRoiDimension && roiImageRect.height() >= kMinRoiDimension) {
+        const QRectF roiWidgetRect = widgetRectForImageRect(roiImageRect);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setBrush(QColor(84, 181, 255, 48));
+        painter.setPen(QPen(QColor(84, 181, 255), 1.5));
+        painter.drawRect(roiWidgetRect);
+    }
 }
 
 void ImageViewport::resizeEvent(QResizeEvent *event)
@@ -160,9 +233,23 @@ void ImageViewport::wheelEvent(QWheelEvent *event)
 void ImageViewport::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && hasImage()) {
+        if (interactionMode_ == InteractionMode::DrawRoi) {
+            if (!isPointInsideImage(event->position())) {
+                event->ignore();
+                return;
+            }
+            drawingRoi_ = true;
+            roiDragStartImage_ = clampedImagePoint(event->position());
+            roiDragCurrentImage_ = roiDragStartImage_;
+            updateCursor();
+            update();
+            event->accept();
+            return;
+        }
+
         panning_ = true;
         lastMousePosition_ = event->pos();
-        setCursor(Qt::ClosedHandCursor);
+        updateCursor();
         event->accept();
         return;
     }
@@ -172,7 +259,10 @@ void ImageViewport::mousePressEvent(QMouseEvent *event)
 
 void ImageViewport::mouseMoveEvent(QMouseEvent *event)
 {
-    if (panning_ && !fitToWindow_) {
+    if (drawingRoi_) {
+        roiDragCurrentImage_ = clampedImagePoint(event->position());
+        update();
+    } else if (panning_ && !fitToWindow_) {
         panOffset_ += event->pos() - lastMousePosition_;
         lastMousePosition_ = event->pos();
         clampPanOffset();
@@ -189,9 +279,23 @@ void ImageViewport::mouseMoveEvent(QMouseEvent *event)
 
 void ImageViewport::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton && drawingRoi_) {
+        drawingRoi_ = false;
+        roiDragCurrentImage_ = clampedImagePoint(event->position());
+        const QRect newRoi = normalizedRoiRect(currentDragImageRect());
+        if (newRoi.isValid() && !newRoi.isEmpty()) {
+            setRoiRectInternal(newRoi);
+        } else {
+            setRoiRectInternal({});
+        }
+        updateCursor();
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton && panning_) {
         panning_ = false;
-        unsetCursor();
+        updateCursor();
         event->accept();
         return;
     }
@@ -282,6 +386,48 @@ QPointF ImageViewport::widgetToImage(const QPointF &widgetPoint) const
     return QPointF((widgetPoint.x() - rect.left()) / scale, (widgetPoint.y() - rect.top()) / scale);
 }
 
+QPointF ImageViewport::clampedImagePoint(const QPointF &widgetPoint) const
+{
+    if (image_.isNull()) {
+        return {};
+    }
+
+    const QPointF imagePoint = widgetToImage(widgetPoint);
+    return QPointF(std::clamp(imagePoint.x(), 0.0, static_cast<double>(image_.width())),
+                   std::clamp(imagePoint.y(), 0.0, static_cast<double>(image_.height())));
+}
+
+QRectF ImageViewport::currentDragImageRect() const
+{
+    return QRectF(roiDragStartImage_, roiDragCurrentImage_).normalized();
+}
+
+QRectF ImageViewport::widgetRectForImageRect(const QRectF &imageRect) const
+{
+    const QPointF topLeft = imageToWidget(imageRect.topLeft());
+    const QPointF bottomRight = imageToWidget(QPointF(imageRect.x() + imageRect.width(),
+                                                      imageRect.y() + imageRect.height()));
+    return QRectF(topLeft, bottomRight).normalized();
+}
+
+QRect ImageViewport::normalizedRoiRect(const QRectF &imageRect) const
+{
+    if (image_.isNull()) {
+        return {};
+    }
+
+    const QRectF normalized = imageRect.normalized();
+    const int left = std::clamp(static_cast<int>(std::floor(normalized.left())), 0, image_.width());
+    const int top = std::clamp(static_cast<int>(std::floor(normalized.top())), 0, image_.height());
+    const int right = std::clamp(static_cast<int>(std::ceil(normalized.right())), 0, image_.width());
+    const int bottom = std::clamp(static_cast<int>(std::ceil(normalized.bottom())), 0, image_.height());
+    const QRect normalizedRect(left, top, std::max(0, right - left), std::max(0, bottom - top));
+    if (normalizedRect.width() < kMinRoiDimension || normalizedRect.height() < kMinRoiDimension) {
+        return {};
+    }
+    return normalizedRect;
+}
+
 void ImageViewport::clampPanOffset()
 {
     if (fitToWindow_ || image_.isNull()) {
@@ -294,4 +440,40 @@ void ImageViewport::clampPanOffset()
     const double verticalSlack = std::max(0.0, (scaledSize.height() - height()) / 2.0);
     panOffset_.setX(std::clamp(panOffset_.x(), -horizontalSlack, horizontalSlack));
     panOffset_.setY(std::clamp(panOffset_.y(), -verticalSlack, verticalSlack));
+}
+
+void ImageViewport::setRoiRectInternal(const QRect &roiRect)
+{
+    const QRect normalized = roiRect.normalized();
+    const QRect bounded = image_.isNull()
+                              ? QRect()
+                              : normalized.intersected(QRect(0, 0, image_.width(), image_.height()));
+    const QRect nextRect = (bounded.isValid() && !bounded.isEmpty()) ? bounded : QRect();
+    const bool hadRoi = hasRoi();
+    const bool nextHasRoi = nextRect.isValid() && !nextRect.isEmpty();
+    if (roiRect_ == nextRect && hadRoi == nextHasRoi) {
+        return;
+    }
+
+    roiRect_ = nextRect;
+    emit roiChanged(roiRect_);
+    if (hadRoi != nextHasRoi) {
+        emit roiPresenceChanged(nextHasRoi);
+    }
+    update();
+}
+
+void ImageViewport::updateCursor()
+{
+    if (panning_) {
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
+
+    if (interactionMode_ == InteractionMode::DrawRoi && hasImage()) {
+        setCursor(Qt::CrossCursor);
+        return;
+    }
+
+    unsetCursor();
 }

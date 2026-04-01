@@ -38,6 +38,11 @@ QString readJsonString(LIMFILEHANDLE handle, LIMSTR (*getter)(LIMFILEHANDLE))
 {
     return takeSdkString(getter(handle));
 }
+
+QColor parsePackedColorRef(quint32 packed)
+{
+    return QColor::fromRgb(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu);
+}
 } // namespace
 
 Nd2Reader::~Nd2Reader()
@@ -392,13 +397,13 @@ QColor Nd2Reader::parseColorValue(const QJsonValue &value)
         bool ok = false;
         const quint32 packed = stringValue.toUInt(&ok, 0);
         if (ok) {
-            return QColor::fromRgb((packed >> 16) & 0xFFu, (packed >> 8) & 0xFFu, packed & 0xFFu);
+            return parsePackedColorRef(packed);
         }
     }
 
     if (value.isDouble()) {
         const quint32 packed = static_cast<quint32>(value.toInt());
-        return QColor::fromRgb((packed >> 16) & 0xFFu, (packed >> 8) & 0xFFu, packed & 0xFFu);
+        return parsePackedColorRef(packed);
     }
 
     return Qt::white;

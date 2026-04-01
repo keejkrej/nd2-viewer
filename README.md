@@ -13,40 +13,33 @@ A Qt 6 desktop viewer for Nikon ND2 microscopy files using Nikon's official ND2 
 
 ## Build
 
-### Planned production toolchain
+### Default toolchain
 
-The project is set up for `Qt 6 msvc2022_64` plus the Nikon Windows SDK.
+The project now targets `Qt 6 msvc2022_64` plus the Nikon Windows SDK by default.
+
+The easiest path is:
 
 ```powershell
-$env:PATH = "C:\Qt\Tools\Ninja;" + $env:PATH
-& "C:\Qt\Tools\CMake_64\bin\cmake.exe" `
-  -S . `
-  -B build-msvc `
-  -G Ninja `
-  -DQt6_DIR="C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6" `
-  -DND2SDK_ROOT="C:/Program Files/nd2readsdk-shared"
-
-& "C:\Qt\Tools\CMake_64\bin\cmake.exe" --build build-msvc -j 8
+.\scripts\build-msvc.ps1
+.\scripts\run-msvc.ps1
 ```
 
-### Local validation build used during implementation
+The helper script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
 
-This repository was syntax/build validated locally with the installed MinGW Qt kit:
+### Manual MSVC build
+
+If you want to run the steps yourself:
 
 ```powershell
-$env:PATH = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;" + $env:PATH
-& "C:\Qt\Tools\CMake_64\bin\cmake.exe" `
-  -S . `
-  -B build-mingw `
-  -G Ninja `
-  -DQt6_DIR="C:/Qt/6.11.0/mingw_64/lib/cmake/Qt6" `
-  -DND2SDK_ROOT="C:/Program Files/nd2readsdk-shared"
-
-& "C:\Qt\Tools\CMake_64\bin\cmake.exe" --build build-mingw -j 8
+$vs = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
+$cmake = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
+cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_DIR=C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6 -DND2SDK_ROOT=C:/Program Files/nd2readsdk-shared && `"$cmake`" --build build-msvc --config Debug -j 8"
 ```
 
 ## Notes
 
 - `CMakeLists.txt` copies the ND2 SDK runtime DLLs after build.
 - If `windeployqt` is available from the selected Qt kit, it is run automatically after build.
+- `scripts/build-msvc.ps1` is the intended day-to-day build entrypoint on this machine.
+- On Windows, the project now supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.

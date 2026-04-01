@@ -42,6 +42,7 @@ private:
         QSlider *slider = nullptr;
         QSpinBox *spinBox = nullptr;
         QLabel *details = nullptr;
+        bool lazySliderCommit = false;
     };
 
     struct MetadataWidgets

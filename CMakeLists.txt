@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(WIN32 AND NOT MSVC)
+  message(FATAL_ERROR "On Windows, nd2-viewer now supports only the MSVC Qt toolchain. Use Qt 6 msvc2022_64.")
+endif()
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -109,16 +113,4 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
     endif()
   endif()
 
-  if(MINGW)
-    get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    foreach(mingw_runtime_dll IN ITEMS libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll)
-      if(EXISTS "${MINGW_BIN_DIR}/${mingw_runtime_dll}")
-        add_custom_command(TARGET nd2-viewer POST_BUILD
-          COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${MINGW_BIN_DIR}/${mingw_runtime_dll}"
-            "$<TARGET_FILE_DIR:nd2-viewer>"
-        )
-      endif()
-    endforeach()
-  endif()
 endif()

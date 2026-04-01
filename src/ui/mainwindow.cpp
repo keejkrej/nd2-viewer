@@ -130,6 +130,13 @@ void clearLayout(QLayout *layout)
         delete item;
     }
 }
+
+bool shouldUseLazySliderCommit(const Nd2LoopInfo &loop)
+{
+    return loop.type == QStringLiteral("TimeLoop")
+           || loop.type == QStringLiteral("NETimeLoop")
+           || loop.type == QStringLiteral("XYPosLoop");
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -384,6 +391,7 @@ void MainWindow::rebuildNavigatorControls()
         widgets.spinBox->setRange(0, qMax(loop.size - 1, 0));
         widgets.details = new QLabel(QStringLiteral("%1 · %2 steps").arg(loop.type, QString::number(loop.size)), widgets.row);
         widgets.details->setMinimumWidth(120);
+        widgets.lazySliderCommit = shouldUseLazySliderCommit(loop);
 
         rowLayout->addWidget(widgets.label);
         rowLayout->addWidget(widgets.slider, 1);
@@ -393,9 +401,26 @@ void MainWindow::rebuildNavigatorControls()
         navigatorRowsLayout_->addWidget(widgets.row);
         loopControls_.push_back(widgets);
 
-        connect(widgets.slider, &QSlider::valueChanged, widgets.spinBox, &QSpinBox::setValue);
-        connect(widgets.spinBox, qOverload<int>(&QSpinBox::valueChanged), widgets.slider, &QSlider::setValue);
+        connect(widgets.slider, &QSlider::valueChanged, this, [this, index](int value) {
+            auto &loopWidgets = loopControls_[index];
+            const QSignalBlocker spinBlocker(loopWidgets.spinBox);
+            loopWidgets.spinBox->setValue(value);
+            if (!loopWidgets.lazySliderCommit || !loopWidgets.slider->isSliderDown()) {
+                controller_.setCoordinateValue(index, value);
+            }
+        });
+
+        connect(widgets.slider, &QSlider::sliderReleased, this, [this, index]() {
+            const auto &loopWidgets = loopControls_[index];
+            if (loopWidgets.lazySliderCommit) {
+                controller_.setCoordinateValue(index, loopWidgets.slider->value());
+            }
+        });
+
         connect(widgets.spinBox, qOverload<int>(&QSpinBox::valueChanged), this, [this, index](int value) {
+            auto &loopWidgets = loopControls_[index];
+            const QSignalBlocker sliderBlocker(loopWidgets.slider);
+            loopWidgets.slider->setValue(value);
             controller_.setCoordinateValue(index, value);
         });
     }

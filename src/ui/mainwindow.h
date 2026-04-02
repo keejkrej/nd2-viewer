@@ -7,6 +7,7 @@
 
 class QAction;
 class ChannelControlsWidget;
+class QEvent;
 class ImageViewport;
 class QLabel;
 class QPlainTextEdit;
@@ -22,6 +23,9 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void openFile();
@@ -69,7 +73,6 @@ private:
         QSlider *slider = nullptr;
         QSpinBox *spinBox = nullptr;
         QLabel *details = nullptr;
-        bool lazySliderCommit = false;
     };
 
     struct MetadataWidgets
@@ -82,8 +85,11 @@ private:
     void buildCentralUi();
     void exportCurrentSelection(ExportScope scope);
     void rebuildNavigatorControls();
+    void commitLoopSliderValue(int loopIndex);
     MetadataWidgets addMetadataTab(const QString &title);
     void setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText);
+    void updateStaticMetadataUi();
+    void updateFrameMetadataUi();
     void setOverviewContent(const Nd2DocumentInfo &info);
     [[nodiscard]] ExportMode promptForExportMode(ExportScope scope) const;
     [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath,

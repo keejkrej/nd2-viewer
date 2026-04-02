@@ -33,6 +33,7 @@ bool DocumentController::openFile(const QString &path)
     currentFrameMetadata_ = {};
     currentFrameMetadataText_.clear();
     frameCache_.clear();
+    channelSettingsRevision_ = 0;
 
     emit documentChanged();
     emit coordinateStateChanged();
@@ -60,6 +61,7 @@ void DocumentController::closeFile()
     currentFrameMetadataText_.clear();
     currentSequenceIndex_ = -1;
     queuedSequenceIndex_ = -1;
+    channelSettingsRevision_ = 0;
     setBusy(false);
 }
 
@@ -141,6 +143,7 @@ void DocumentController::setChannelSettings(int channelIndex, const ChannelRende
     }
 
     channelSettings_[channelIndex] = settings;
+    ++channelSettingsRevision_;
     emit channelSettingsChanged();
     rerenderCurrentFrame(false);
 }
@@ -152,6 +155,7 @@ void DocumentController::autoContrastChannel(int channelIndex)
     }
 
     channelSettings_[channelIndex].autoContrast = true;
+    ++channelSettingsRevision_;
     rerenderCurrentFrame(true);
 }
 
@@ -160,6 +164,7 @@ void DocumentController::autoContrastAllChannels()
     for (ChannelRenderSettings &settings : channelSettings_) {
         settings.autoContrast = true;
     }
+    ++channelSettingsRevision_;
     rerenderCurrentFrame(true);
 }
 
@@ -199,9 +204,13 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
 
     setBusy(true);
     const int requestId = ++requestCounter_;
-    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, sequenceIndex]() {
+    const int settingsRevision = channelSettingsRevision_;
+    const FrameCoordinateState coordinates = coordinateState_;
+    const QVector<ChannelRenderSettings> channelSettings = channelSettings_;
+    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, settingsRevision, sequenceIndex, coordinates, channelSettings]() {
         FrameLoadResult result;
         result.requestId = requestId;
+        result.settingsRevision = settingsRevision;
         result.sequenceIndex = sequenceIndex;
 
         RawFrame frame;
@@ -217,8 +226,11 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
 
         QString metadataError;
         result.metadataText = reader_.frameMetadataText(sequenceIndex, &metadataError);
-        result.metadata = reader_.frameMetadata(sequenceIndex);
+        result.metadata = QJsonDocument::fromJson(result.metadataText.toUtf8());
         result.frame = frame;
+        result.channelSettings = channelSettings;
+        result.channelSettingsChanged = FrameRenderer::applyAutoContrast(result.frame, result.channelSettings);
+        result.renderedFrame = FrameRenderer::render(result.frame, coordinates, result.channelSettings);
         result.success = true;
         if (!metadataError.isEmpty()) {
             result.error = metadataError;
@@ -249,7 +261,16 @@ void DocumentController::handleFrameLoadFinished()
     currentFrameMetadata_ = result.metadata;
     currentFrameMetadataText_ = result.metadataText;
 
-    rerenderCurrentFrame(true);
+    if (result.settingsRevision == channelSettingsRevision_) {
+        channelSettings_ = result.channelSettings;
+        renderedFrame_ = result.renderedFrame;
+        if (result.channelSettingsChanged) {
+            emit channelSettingsChanged();
+        }
+        emit frameReady();
+    } else {
+        rerenderCurrentFrame(true);
+    }
     emit metadataChanged();
     emit statusTextChanged(QStringLiteral("Frame %1 / %2").arg(currentSequenceIndex_ + 1).arg(reader_.sequenceCount()));
 

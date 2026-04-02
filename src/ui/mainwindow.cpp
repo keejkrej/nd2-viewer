@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -192,13 +193,6 @@ void clearLayout(QLayout *layout)
         delete item;
     }
 }
-
-bool shouldUseLazySliderCommit(const Nd2LoopInfo &loop)
-{
-    return loop.type == QStringLiteral("TimeLoop")
-           || loop.type == QStringLiteral("NETimeLoop")
-           || loop.type == QStringLiteral("XYPosLoop");
-}
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -239,6 +233,35 @@ MainWindow::MainWindow(QWidget *parent)
             &controller_, &DocumentController::autoContrastAllChannels);
 
     updateDocumentUi();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    bool shouldCommit = false;
+    for (int index = 0; index < loopControls_.size(); ++index) {
+        const auto &loopWidgets = loopControls_.at(index);
+        if (watched != loopWidgets.slider) {
+            continue;
+        }
+
+        switch (event->type()) {
+        case QEvent::MouseButtonRelease:
+        case QEvent::KeyRelease:
+        case QEvent::Wheel:
+            shouldCommit = true;
+            break;
+        default:
+            break;
+        }
+
+        const bool handled = QMainWindow::eventFilter(watched, event);
+        if (shouldCommit) {
+            commitLoopSliderValue(index);
+        }
+        return handled;
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::openFile()
@@ -366,7 +389,8 @@ void MainWindow::updateDocumentUi()
     channelControlsWidget_->setChannels(controller_.documentInfo().channels, controller_.channelSettings());
     updateCoordinateUi();
     updateChannelUi();
-    updateMetadataUi();
+    updateStaticMetadataUi();
+    updateFrameMetadataUi();
     updateWindowTitle();
     updateInfoLabel();
 }
@@ -391,24 +415,31 @@ void MainWindow::updateChannelUi()
 void MainWindow::updateFrameUi()
 {
     imageViewport_->setImage(controller_.renderedFrame().image);
-    updateMetadataUi();
     updateInfoLabel();
 }
 
 void MainWindow::updateMetadataUi()
+{
+    updateFrameMetadataUi();
+}
+
+void MainWindow::updateStaticMetadataUi()
 {
     const Nd2DocumentInfo &info = controller_.documentInfo();
 
     setOverviewContent(info);
     setMetadataContent(attributesWidgets_, documentValue(info.attributesJson), prettyJson(info.attributesJson));
     setMetadataContent(experimentWidgets_, documentValue(info.experimentJson), prettyJson(info.experimentJson));
+    setMetadataContent(textInfoWidgets_, documentValue(info.textInfoJson), prettyJson(info.textInfoJson));
+}
 
+void MainWindow::updateFrameMetadataUi()
+{
+    const Nd2DocumentInfo &info = controller_.documentInfo();
     const QJsonDocument metadataDoc = controller_.currentFrameMetadata().isNull() ? info.metadataJson : controller_.currentFrameMetadata();
     const QString metadataRaw = controller_.currentFrameMetadataText().isEmpty() ? prettyJson(info.metadataJson)
                                                                                  : controller_.currentFrameMetadataText();
     setMetadataContent(metadataWidgets_, documentValue(metadataDoc), metadataRaw);
-
-    setMetadataContent(textInfoWidgets_, documentValue(info.textInfoJson), prettyJson(info.textInfoJson));
 }
 
 void MainWindow::showErrorMessage(const QString &message)
@@ -604,11 +635,12 @@ void MainWindow::rebuildNavigatorControls()
         widgets.label->setMinimumWidth(84);
         widgets.slider = new QSlider(Qt::Horizontal, widgets.row);
         widgets.slider->setRange(0, qMax(loop.size - 1, 0));
+        widgets.slider->setTracking(false);
+        widgets.slider->installEventFilter(this);
         widgets.spinBox = new QSpinBox(widgets.row);
         widgets.spinBox->setRange(0, qMax(loop.size - 1, 0));
         widgets.details = new QLabel(QStringLiteral("%1 · %2 steps").arg(loop.type, QString::number(loop.size)), widgets.row);
         widgets.details->setMinimumWidth(120);
-        widgets.lazySliderCommit = shouldUseLazySliderCommit(loop);
 
         rowLayout->addWidget(widgets.label);
         rowLayout->addWidget(widgets.slider, 1);
@@ -618,20 +650,20 @@ void MainWindow::rebuildNavigatorControls()
         navigatorRowsLayout_->addWidget(widgets.row);
         loopControls_.push_back(widgets);
 
+        connect(widgets.slider, &QSlider::sliderMoved, this, [this, index](int value) {
+            auto &loopWidgets = loopControls_[index];
+            const QSignalBlocker spinBlocker(loopWidgets.spinBox);
+            loopWidgets.spinBox->setValue(value);
+        });
+
         connect(widgets.slider, &QSlider::valueChanged, this, [this, index](int value) {
             auto &loopWidgets = loopControls_[index];
             const QSignalBlocker spinBlocker(loopWidgets.spinBox);
             loopWidgets.spinBox->setValue(value);
-            if (!loopWidgets.lazySliderCommit || !loopWidgets.slider->isSliderDown()) {
-                controller_.setCoordinateValue(index, value);
-            }
         });
 
         connect(widgets.slider, &QSlider::sliderReleased, this, [this, index]() {
-            const auto &loopWidgets = loopControls_[index];
-            if (loopWidgets.lazySliderCommit) {
-                controller_.setCoordinateValue(index, loopWidgets.slider->value());
-            }
+            commitLoopSliderValue(index);
         });
 
         connect(widgets.spinBox, qOverload<int>(&QSpinBox::valueChanged), this, [this, index](int value) {
@@ -643,6 +675,16 @@ void MainWindow::rebuildNavigatorControls()
     }
 
     navigatorRowsLayout_->addStretch(1);
+}
+
+void MainWindow::commitLoopSliderValue(int loopIndex)
+{
+    if (loopIndex < 0 || loopIndex >= loopControls_.size()) {
+        return;
+    }
+
+    const auto &loopWidgets = loopControls_.at(loopIndex);
+    controller_.setCoordinateValue(loopIndex, loopWidgets.slider->sliderPosition());
 }
 
 MainWindow::MetadataWidgets MainWindow::addMetadataTab(const QString &title)

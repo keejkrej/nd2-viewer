@@ -50,11 +50,15 @@ private:
     struct FrameLoadResult
     {
         int requestId = 0;
+        int settingsRevision = 0;
         int sequenceIndex = -1;
         bool success = false;
         RawFrame frame;
         QJsonDocument metadata;
         QString metadataText;
+        RenderedFrame renderedFrame;
+        QVector<ChannelRenderSettings> channelSettings;
+        bool channelSettingsChanged = false;
         QString error;
     };
 
@@ -77,6 +81,7 @@ private:
     int currentSequenceIndex_ = -1;
     int queuedSequenceIndex_ = -1;
     int requestCounter_ = 0;
+    int channelSettingsRevision_ = 0;
     bool busy_ = false;
     QFutureWatcher<FrameLoadResult> frameWatcher_;
 };

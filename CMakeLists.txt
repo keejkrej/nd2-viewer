@@ -269,14 +269,15 @@ if(WIN32)
   set(CPACK_NSIS_DISPLAY_NAME "nd2-viewer")
   set(CPACK_NSIS_PACKAGE_NAME "nd2-viewer")
   set(CPACK_NSIS_INSTALLED_ICON_NAME "nd2-viewer.exe")
+  set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
   set(CPACK_NSIS_MODIFY_PATH OFF)
   set(CPACK_NSIS_MUI_FINISHPAGE_RUN "nd2-viewer.exe")
   set(CPACK_NSIS_CREATE_ICONS_EXTRA
-    "CreateShortCut '$DESKTOP\\\\nd2-viewer.lnk' '$INSTDIR\\\\nd2-viewer.exe'"
+    "CreateShortCut \\\"$DESKTOP\\\\nd2-viewer.lnk\\\" \\\"$INSTDIR\\\\nd2-viewer.exe\\\""
   )
   set(CPACK_NSIS_DELETE_ICONS_EXTRA
-    "Delete '$DESKTOP\\\\nd2-viewer.lnk'"
+    "Delete \\\"$DESKTOP\\\\nd2-viewer.lnk\\\""
   )
 elseif(APPLE)
   set(CPACK_GENERATOR "DragNDrop")

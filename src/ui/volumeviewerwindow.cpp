@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QComboBox>
 #include <QPushButton>
+#include <QSlider>
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -86,9 +87,50 @@ void VolumeViewerWindow::buildUi()
     auto *sidebarLayout = new QVBoxLayout(sidebar);
     sidebarLayout->setContentsMargins(0, 0, 0, 0);
     sidebarLayout->setSpacing(8);
+    auto *selectionTitle = new QLabel(tr("<b>3D Select</b>"), sidebar);
+    selectionStatusLabel_ = new QLabel(tr("Rotate to a view, click Add View, then draw a contour around the nucleus."), sidebar);
+    selectionStatusLabel_->setWordWrap(true);
+    auto *selectionOpacityRow = new QHBoxLayout();
+    selectionOpacityRow->setContentsMargins(0, 0, 0, 0);
+    selectionOpacityRow->setSpacing(6);
+    auto *selectionOpacityLabel = new QLabel(tr("Overlay Opacity"), sidebar);
+    selectionOpacitySlider_ = new QSlider(Qt::Horizontal, sidebar);
+    selectionOpacitySlider_->setRange(5, 100);
+    selectionOpacitySlider_->setValue(static_cast<int>(std::lround(viewport_->selectionOverlayOpacity() * 100.0)));
+    selectionOpacitySlider_->setEnabled(false);
+    selectionOpacitySlider_->setToolTip(tr("Adjust how strongly the 3D selection overlay is drawn."));
+    selectionOpacityValueLabel_ = new QLabel(sidebar);
+    selectionOpacityValueLabel_->setMinimumWidth(44);
+    selectionOpacityValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    selectionOpacityRow->addWidget(selectionOpacityLabel);
+    selectionOpacityRow->addWidget(selectionOpacitySlider_, 1);
+    selectionOpacityRow->addWidget(selectionOpacityValueLabel_);
+    addViewButton_ = new QPushButton(tr("Add View"), sidebar);
+    addViewButton_->setEnabled(false);
+    acceptContourButton_ = new QPushButton(tr("Accept Contour"), sidebar);
+    acceptContourButton_->setEnabled(false);
+    undoViewButton_ = new QPushButton(tr("Undo Last View"), sidebar);
+    undoViewButton_->setEnabled(false);
+    clearSelectionButton_ = new QPushButton(tr("Clear"), sidebar);
+    clearSelectionButton_->setEnabled(false);
+    auto *selectionButtonsRow = new QHBoxLayout();
+    selectionButtonsRow->setContentsMargins(0, 0, 0, 0);
+    selectionButtonsRow->setSpacing(6);
+    selectionButtonsRow->addWidget(addViewButton_);
+    selectionButtonsRow->addWidget(acceptContourButton_);
+    auto *selectionButtonsRow2 = new QHBoxLayout();
+    selectionButtonsRow2->setContentsMargins(0, 0, 0, 0);
+    selectionButtonsRow2->setSpacing(6);
+    selectionButtonsRow2->addWidget(undoViewButton_);
+    selectionButtonsRow2->addWidget(clearSelectionButton_);
     auto *channelsTitle = new QLabel(tr("<b>3D Channels</b>"), sidebar);
     channelControlsWidget_ = new ChannelControlsWidget(sidebar);
     channelControlsWidget_->setEnabled(false);
+    sidebarLayout->addWidget(selectionTitle);
+    sidebarLayout->addWidget(selectionStatusLabel_);
+    sidebarLayout->addLayout(selectionOpacityRow);
+    sidebarLayout->addLayout(selectionButtonsRow);
+    sidebarLayout->addLayout(selectionButtonsRow2);
     sidebarLayout->addWidget(channelsTitle);
     sidebarLayout->addWidget(channelControlsWidget_, 1);
 
@@ -104,6 +146,14 @@ void VolumeViewerWindow::buildUi()
 
     connect(fitToVolumeButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::fitToVolume);
     connect(resetViewButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::resetView);
+    connect(addViewButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::beginProjectionConstraint);
+    connect(acceptContourButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::acceptPendingConstraint);
+    connect(undoViewButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::undoLastConstraint);
+    connect(clearSelectionButton_, &QPushButton::clicked, viewport_, &VolumeViewport3D::clearSelection);
+    connect(selectionOpacitySlider_, &QSlider::valueChanged, this, [this](int value) {
+        viewport_->setSelectionOverlayOpacity(static_cast<qreal>(value) / 100.0);
+        updateSelectionOpacityLabel();
+    });
     connect(renderModeComboBox_, &QComboBox::currentIndexChanged, this, [this](int index) {
         if (index < 0) {
             return;
@@ -130,7 +180,10 @@ void VolumeViewerWindow::buildUi()
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested, this, [this](int channelIndex) {
         openAutoContrastTuningDialog(channelIndex);
     });
+    connect(viewport_, &VolumeViewport3D::selectionStateChanged, this, &VolumeViewerWindow::updateSelectionUi);
     connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &VolumeViewerWindow::handleVolumeLoadFinished);
+    updateSelectionOpacityLabel();
+    updateSelectionUi();
 }
 
 void VolumeViewerWindow::startLoad()
@@ -173,6 +226,7 @@ void VolumeViewerWindow::handleVolumeLoadFinished()
     channelControlsWidget_->setEnabled(true);
     setLoadedChannelSettings(result.channelSettings);
     viewport_->setVolume(volume_, channelSettings_);
+    updateSelectionUi();
     if (!viewport_->lastError().isEmpty()) {
         statusLabel_->setText(tr("3D shader error: %1").arg(viewport_->lastError()));
         QMessageBox::warning(this, tr("3D View"), viewport_->lastError());
@@ -184,6 +238,43 @@ void VolumeViewerWindow::setLoadedChannelSettings(const QVector<ChannelRenderSet
     channelSettings_ = settings;
     channelControlsWidget_->setChannels(info_.channels, channelSettings_);
     viewport_->setChannelSettings(channelSettings_);
+}
+
+void VolumeViewerWindow::updateSelectionUi()
+{
+    if (!selectionStatusLabel_ || !viewport_) {
+        return;
+    }
+
+    selectionStatusLabel_->setText(viewport_->selectionStatusText());
+    const QString colorName = viewport_->selectionStatusWarning() ? QStringLiteral("#ffb085") : QStringLiteral("#d8d8d8");
+    selectionStatusLabel_->setStyleSheet(QStringLiteral("QLabel { color: %1; }").arg(colorName));
+
+    int enabledChannelCount = 0;
+    for (const ChannelRenderSettings &settings : channelSettings_) {
+        enabledChannelCount += settings.enabled ? 1 : 0;
+    }
+
+    const bool volumeReady = volume_.isValid();
+    const bool busy = viewport_->isSelectionBusy();
+    const bool singleChannelReady = enabledChannelCount == 1;
+    addViewButton_->setEnabled(volumeReady && singleChannelReady && !busy && !viewport_->hasPendingConstraint());
+    acceptContourButton_->setEnabled(volumeReady && singleChannelReady && !busy && viewport_->hasPendingConstraint());
+    undoViewButton_->setEnabled(volumeReady && !busy && viewport_->acceptedConstraintCount() > 0);
+    clearSelectionButton_->setEnabled(volumeReady && !busy
+                                      && (viewport_->acceptedConstraintCount() > 0 || viewport_->hasPendingConstraint() || viewport_->hasSelection()));
+    if (selectionOpacitySlider_) {
+        selectionOpacitySlider_->setEnabled(volumeReady && singleChannelReady);
+    }
+}
+
+void VolumeViewerWindow::updateSelectionOpacityLabel()
+{
+    if (!selectionOpacityValueLabel_ || !viewport_) {
+        return;
+    }
+
+    selectionOpacityValueLabel_->setText(tr("%1%").arg(static_cast<int>(std::lround(viewport_->selectionOverlayOpacity() * 100.0))));
 }
 
 void VolumeViewerWindow::autoContrastChannel(int channelIndex)

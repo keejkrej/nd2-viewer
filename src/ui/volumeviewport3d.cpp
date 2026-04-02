@@ -1,5 +1,7 @@
 #include "ui/volumeviewport3d.h"
 
+#include <QtConcurrent>
+
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QOpenGLContext>
@@ -7,6 +9,9 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QOpenGLVertexArrayObject>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPainterPath>
 #include <QtMath>
 #include <QWheelEvent>
 
@@ -155,6 +160,16 @@ constexpr std::array<float, 12> kSliceVertices = {
     1.0f, 1.0f,
 };
 
+QString defaultSelectionPrompt()
+{
+    return QObject::tr("Rotate to a view, click Add View, then draw a contour around the nucleus.");
+}
+
+QString singleChannelRequiredPrompt()
+{
+    return QObject::tr("3D Select requires exactly one enabled channel.");
+}
+
 double sampleVolumeValue(const RawVolume &volume, int channelIndex, qsizetype voxelIndex)
 {
     if (!volume.isValid() || channelIndex < 0 || channelIndex >= volume.components || voxelIndex < 0 || voxelIndex >= volume.voxelCount()) {
@@ -200,16 +215,216 @@ float jitterFromIndex(int x, int y, int z, int salt)
     seed = (seed ^ static_cast<quint32>(z + salt * 47)) * 16777619u;
     return (static_cast<float>(seed & 0xFFFFu) / 65535.0f) - 0.5f;
 }
+
+QImage rasterizedContourMask(const QSize &size, const QPolygonF &contour)
+{
+    if (!size.isValid() || contour.size() < 3) {
+        return {};
+    }
+
+    QImage image(size, QImage::Format_Alpha8);
+    image.fill(0);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::white);
+    painter.drawPolygon(contour);
+    return image;
+}
+
+VolumeViewport3D::SelectionMask3D emptySelectionMask(const RawVolume &volume)
+{
+    VolumeViewport3D::SelectionMask3D mask;
+    if (!volume.isValid()) {
+        return mask;
+    }
+
+    mask.width = volume.width;
+    mask.height = volume.height;
+    mask.depth = volume.depth;
+    mask.voxels.fill(0, static_cast<int>(volume.voxelCount()));
+    return mask;
+}
+
+QVector3D voxelObjectPositionForConstraint(const RawVolume &volume,
+                                           int x,
+                                           int y,
+                                           int z,
+                                           const QVector3D &boundsMin,
+                                           const QVector3D &boundsMax,
+                                           const QVector3D &texMin,
+                                           const QVector3D &texMax)
+{
+    const float texX = volume.width <= 1 ? 0.5f : static_cast<float>(x) / static_cast<float>(volume.width - 1);
+    const float texY = volume.height <= 1 ? 0.5f : static_cast<float>(y) / static_cast<float>(volume.height - 1);
+    const float texZ = volume.depth <= 1 ? 0.5f : static_cast<float>(z) / static_cast<float>(volume.depth - 1);
+
+    const auto remap = [](float texCoord, float minimum, float maximum, bool invert) {
+        const float denominator = std::max(maximum - minimum, 1.0e-6f);
+        if (invert) {
+            return std::clamp((maximum - texCoord) / denominator, 0.0f, 1.0f);
+        }
+        return std::clamp((texCoord - minimum) / denominator, 0.0f, 1.0f);
+    };
+
+    const QVector3D localCoord(remap(texX, texMin.x(), texMax.x(), false),
+                               remap(texY, texMin.y(), texMax.y(), true),
+                               remap(texZ, texMin.z(), texMax.z(), false));
+
+    const auto interpolate = [](float minimum, float maximum, float fraction) {
+        return minimum + ((maximum - minimum) * fraction);
+    };
+
+    return {
+        interpolate(boundsMin.x(), boundsMax.x(), localCoord.x()),
+        interpolate(boundsMin.y(), boundsMax.y(), localCoord.y()),
+        interpolate(boundsMin.z(), boundsMax.z(), localCoord.z())
+    };
+}
+
+VolumeViewport3D::SelectionMask3D buildProjectionMask(const RawVolume &volume, const VolumeViewport3D::ProjectionConstraint &constraint)
+{
+    VolumeViewport3D::SelectionMask3D mask = emptySelectionMask(volume);
+    if (!mask.isValid() || !constraint.isValid()) {
+        return mask;
+    }
+
+    const uchar *maskBits = constraint.maskImage.constBits();
+    const int bytesPerLine = constraint.maskImage.bytesPerLine();
+    const int width = constraint.viewportSize.width();
+    const int height = constraint.viewportSize.height();
+
+    for (int z = 0; z < volume.depth; ++z) {
+        for (int y = 0; y < volume.height; ++y) {
+            for (int x = 0; x < volume.width; ++x) {
+                const QVector3D objectPosition = voxelObjectPositionForConstraint(volume,
+                                                                                  x,
+                                                                                  y,
+                                                                                  z,
+                                                                                  constraint.boundsMin,
+                                                                                  constraint.boundsMax,
+                                                                                  constraint.texMin,
+                                                                                  constraint.texMax);
+                const QVector4D clipPosition = constraint.modelViewProjection * QVector4D(objectPosition, 1.0f);
+                if (clipPosition.w() <= 1.0e-6f) {
+                    continue;
+                }
+
+                const QVector3D ndc(clipPosition.x() / clipPosition.w(),
+                                    clipPosition.y() / clipPosition.w(),
+                                    clipPosition.z() / clipPosition.w());
+                if (ndc.x() < -1.0f || ndc.x() > 1.0f || ndc.y() < -1.0f || ndc.y() > 1.0f || ndc.z() < -1.0f || ndc.z() > 1.0f) {
+                    continue;
+                }
+
+                const int pixelX = std::clamp(static_cast<int>(std::lround((ndc.x() * 0.5f + 0.5f) * static_cast<float>(width - 1))),
+                                              0,
+                                              width - 1);
+                const int pixelY = std::clamp(static_cast<int>(std::lround((1.0f - (ndc.y() * 0.5f + 0.5f)) * static_cast<float>(height - 1))),
+                                              0,
+                                              height - 1);
+                if (maskBits[pixelY * bytesPerLine + pixelX] == 0) {
+                    continue;
+                }
+
+                const qsizetype voxelIndex = (static_cast<qsizetype>(z) * volume.width * volume.height)
+                                           + (static_cast<qsizetype>(y) * volume.width)
+                                           + x;
+                mask.voxels[static_cast<int>(voxelIndex)] = 1;
+                ++mask.selectedVoxelCount;
+            }
+        }
+    }
+
+    return mask;
+}
+
+VolumeViewport3D::SelectionMask3D intersectMasks(const VolumeViewport3D::SelectionMask3D &left,
+                                                 const VolumeViewport3D::SelectionMask3D &right)
+{
+    if (!left.isValid()) {
+        return right;
+    }
+    if (!right.isValid()) {
+        return left;
+    }
+
+    VolumeViewport3D::SelectionMask3D result = left;
+    result.selectedVoxelCount = 0;
+    for (int index = 0; index < result.voxels.size(); ++index) {
+        const char value = (left.voxels.at(index) != 0 && right.voxels.at(index) != 0) ? 1 : 0;
+        result.voxels[index] = value;
+        result.selectedVoxelCount += value != 0 ? 1 : 0;
+    }
+    return result;
+}
+
+QString selectionWarningForCounts(qsizetype voxelCount, int acceptedViewCount)
+{
+    if (acceptedViewCount < 2) {
+        return {};
+    }
+
+    if (voxelCount <= 0) {
+        return QObject::tr("Views do not agree. The intersection is empty.");
+    }
+
+    if (voxelCount < 256) {
+        return QObject::tr("Views barely agree. The intersection is very small.");
+    }
+
+    return {};
+}
+
+VolumeViewport3D::SelectionComputationResult computeSelectionFromConstraints(const RawVolume &volume,
+                                                                             const QVector<VolumeViewport3D::ProjectionConstraint> &constraints)
+{
+    VolumeViewport3D::SelectionComputationResult result;
+    if (!volume.isValid() || constraints.isEmpty()) {
+        result.success = true;
+        return result;
+    }
+
+    VolumeViewport3D::SelectionMask3D fusedMask;
+    for (int index = 0; index < constraints.size(); ++index) {
+        const auto latestMask = buildProjectionMask(volume, constraints.at(index));
+        if (!latestMask.isValid()) {
+            return result;
+        }
+
+        if (index == 0) {
+            fusedMask = latestMask;
+        } else {
+            fusedMask = intersectMasks(fusedMask, latestMask);
+        }
+
+        if (index == constraints.size() - 1) {
+            result.latestMask = latestMask;
+        }
+    }
+
+    result.fusedMask = fusedMask;
+    result.warning = selectionWarningForCounts(fusedMask.selectedVoxelCount, constraints.size());
+    result.success = true;
+    return result;
+}
 }
 
 VolumeViewport3D::VolumeViewport3D(QWidget *parent)
     : QOpenGLWidget(parent)
 {
     setMinimumSize(500, 400);
+    selectionStatusText_ = defaultSelectionPrompt();
+    connect(&selectionWatcher_, &QFutureWatcher<SelectionComputationResult>::finished, this, &VolumeViewport3D::handleSelectionComputationFinished);
 }
 
 VolumeViewport3D::~VolumeViewport3D()
 {
+    if (selectionWatcher_.isRunning()) {
+        selectionWatcher_.waitForFinished();
+    }
+
     makeCurrent();
     clearTextures();
     clearPointCloud();
@@ -227,6 +442,161 @@ QString VolumeViewport3D::lastError() const
     return lastError_;
 }
 
+void VolumeViewport3D::beginProjectionConstraint()
+{
+    if (!volume_.isValid() || selectionWatcher_.isRunning()) {
+        return;
+    }
+
+    if (activeSelectionChannelCount() != 1) {
+        contourCaptureActive_ = false;
+        contourDrawing_ = false;
+        pendingContour_.clear();
+        selectionStatusText_ = singleChannelRequiredPrompt();
+        selectionStatusWarning_ = true;
+        update();
+        emit selectionStateChanged();
+        return;
+    }
+
+    contourCaptureActive_ = true;
+    contourDrawing_ = false;
+    pendingContour_.clear();
+    selectionStatusText_ = tr("Draw a closed contour around the nucleus, then click Accept Contour.");
+    selectionStatusWarning_ = false;
+    update();
+    emit selectionStateChanged();
+}
+
+void VolumeViewport3D::acceptPendingConstraint()
+{
+    if (!hasPendingConstraint() || selectionWatcher_.isRunning()) {
+        return;
+    }
+
+    if (activeSelectionChannelCount() != 1) {
+        contourCaptureActive_ = false;
+        contourDrawing_ = false;
+        pendingContour_.clear();
+        selectionStatusText_ = singleChannelRequiredPrompt();
+        selectionStatusWarning_ = true;
+        emit selectionStateChanged();
+        update();
+        return;
+    }
+
+    const ProjectionConstraint constraint = capturePendingConstraint();
+    if (!constraint.isValid()) {
+        selectionStatusText_ = tr("Draw a larger closed contour before accepting.");
+        selectionStatusWarning_ = true;
+        emit selectionStateChanged();
+        update();
+        return;
+    }
+
+    pendingSelectionConstraints_ = acceptedConstraints_;
+    pendingSelectionConstraints_.push_back(constraint);
+    contourCaptureActive_ = false;
+    contourDrawing_ = false;
+    pendingContour_.clear();
+    startSelectionComputation(pendingSelectionConstraints_);
+}
+
+void VolumeViewport3D::undoLastConstraint()
+{
+    if (selectionWatcher_.isRunning() || acceptedConstraints_.isEmpty()) {
+        return;
+    }
+
+    pendingSelectionConstraints_ = acceptedConstraints_;
+    pendingSelectionConstraints_.removeLast();
+    contourCaptureActive_ = false;
+    contourDrawing_ = false;
+    pendingContour_.clear();
+
+    if (pendingSelectionConstraints_.isEmpty()) {
+        acceptedConstraints_.clear();
+        latestMask_ = {};
+        fusedMask_ = {};
+        latestOverlaySamples_.clear();
+        fusedOverlaySamples_.clear();
+        selectionStatusText_ = defaultSelectionPrompt();
+        selectionStatusWarning_ = false;
+        emit selectionStateChanged();
+        update();
+        return;
+    }
+
+    startSelectionComputation(pendingSelectionConstraints_);
+}
+
+void VolumeViewport3D::clearSelection()
+{
+    if (selectionWatcher_.isRunning()) {
+        return;
+    }
+
+    contourCaptureActive_ = false;
+    contourDrawing_ = false;
+    pendingContour_.clear();
+    acceptedConstraints_.clear();
+    pendingSelectionConstraints_.clear();
+    latestMask_ = {};
+    fusedMask_ = {};
+    latestOverlaySamples_.clear();
+    fusedOverlaySamples_.clear();
+    selectionStatusText_ = defaultSelectionPrompt();
+    selectionStatusWarning_ = false;
+    emit selectionStateChanged();
+    update();
+}
+
+bool VolumeViewport3D::isSelectionBusy() const
+{
+    return selectionWatcher_.isRunning();
+}
+
+bool VolumeViewport3D::hasPendingConstraint() const
+{
+    return contourCaptureActive_ && !contourDrawing_ && pendingContour_.size() >= 3;
+}
+
+bool VolumeViewport3D::hasSelection() const
+{
+    return fusedMask_.selectedVoxelCount > 0;
+}
+
+int VolumeViewport3D::acceptedConstraintCount() const
+{
+    return acceptedConstraints_.size();
+}
+
+QString VolumeViewport3D::selectionStatusText() const
+{
+    return selectionStatusText_.isEmpty() ? defaultSelectionPrompt() : selectionStatusText_;
+}
+
+bool VolumeViewport3D::selectionStatusWarning() const
+{
+    return selectionStatusWarning_;
+}
+
+void VolumeViewport3D::setSelectionOverlayOpacity(qreal opacity)
+{
+    const qreal clampedOpacity = std::clamp(opacity, 0.05, 1.0);
+    if (qFuzzyCompare(selectionOverlayOpacity_, clampedOpacity)) {
+        return;
+    }
+
+    selectionOverlayOpacity_ = clampedOpacity;
+    update();
+}
+
+qreal VolumeViewport3D::selectionOverlayOpacity() const
+{
+    return selectionOverlayOpacity_;
+}
+
 void VolumeViewport3D::setVolume(const RawVolume &volume, const QVector<ChannelRenderSettings> &channelSettings)
 {
     volume_ = volume;
@@ -234,6 +604,17 @@ void VolumeViewport3D::setVolume(const RawVolume &volume, const QVector<ChannelR
     texturesDirty_ = true;
     pointCloudDirty_ = true;
     pendingAutoFit_ = true;
+    contourCaptureActive_ = false;
+    contourDrawing_ = false;
+    pendingContour_.clear();
+    acceptedConstraints_.clear();
+    pendingSelectionConstraints_.clear();
+    latestMask_ = {};
+    fusedMask_ = {};
+    latestOverlaySamples_.clear();
+    fusedOverlaySamples_.clear();
+    selectionStatusText_ = defaultSelectionPrompt();
+    selectionStatusWarning_ = false;
     qInfo("3D viewport volume set: %dx%dx%d components=%d bits=%d type=%s",
           volume_.width,
           volume_.height,
@@ -242,12 +623,28 @@ void VolumeViewport3D::setVolume(const RawVolume &volume, const QVector<ChannelR
           volume_.bitsPerComponent,
           qPrintable(volume_.pixelDataType));
     resetView();
+    emit selectionStateChanged();
 }
 
 void VolumeViewport3D::setChannelSettings(const QVector<ChannelRenderSettings> &channelSettings)
 {
     channelSettings_ = channelSettings;
     pointCloudDirty_ = true;
+    if (!selectionWatcher_.isRunning()) {
+        if (activeSelectionChannelCount() != 1) {
+            contourCaptureActive_ = false;
+            contourDrawing_ = false;
+            pendingContour_.clear();
+            if (!acceptedConstraints_.isEmpty() || !hasSelection()) {
+                selectionStatusText_ = singleChannelRequiredPrompt();
+                selectionStatusWarning_ = true;
+            }
+        } else if (!contourCaptureActive_ && acceptedConstraints_.isEmpty() && !hasSelection()) {
+            selectionStatusText_ = defaultSelectionPrompt();
+            selectionStatusWarning_ = false;
+        }
+        emit selectionStateChanged();
+    }
     update();
 }
 
@@ -370,15 +767,7 @@ void VolumeViewport3D::paintGL()
 
     ensurePointCloud();
     ensureTextures();
-
-    QMatrix4x4 projection;
-    projection.perspective(45.0f, float(width()) / std::max(1, height()), 0.1f, 20.0f);
-
-    QMatrix4x4 view;
-    const QVector3D cameraPosition = cameraPositionObject();
-    view.lookAt(cameraPosition, QVector3D(0.0f, 0.0f, 0.0f), QVector3D(0.0f, 1.0f, 0.0f));
-
-    QMatrix4x4 mvp = projection * view;
+    const QMatrix4x4 mvp = currentModelViewProjection();
 
     const bool drawPoints = renderMode_ == RenderMode::Hybrid || renderMode_ == RenderMode::Points;
     const bool drawSmoothSlices = renderMode_ == RenderMode::Hybrid || renderMode_ == RenderMode::Smooth;
@@ -470,6 +859,242 @@ void VolumeViewport3D::paintGL()
 
         program_->release();
     }
+}
+
+void VolumeViewport3D::paintEvent(QPaintEvent *event)
+{
+    QOpenGLWidget::paintEvent(event);
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    drawOverlay(painter);
+}
+
+void VolumeViewport3D::mousePressEvent(QMouseEvent *event)
+{
+    if (contourCaptureActive_ && !selectionWatcher_.isRunning() && event->button() == Qt::LeftButton) {
+        contourDrawing_ = true;
+        pendingContour_.clear();
+        pendingContour_ << event->position();
+        update();
+        emit selectionStateChanged();
+        event->accept();
+        return;
+    }
+
+    lastMousePosition_ = event->pos();
+    event->accept();
+}
+
+void VolumeViewport3D::mouseMoveEvent(QMouseEvent *event)
+{
+    if (contourDrawing_) {
+        const QPointF position = event->position();
+        if (pendingContour_.isEmpty() || QLineF(pendingContour_.last(), position).length() >= 2.0) {
+            pendingContour_ << position;
+            update();
+        }
+        event->accept();
+        return;
+    }
+
+    if (!(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    const QPoint delta = event->pos() - lastMousePosition_;
+    lastMousePosition_ = event->pos();
+    yawDegrees_ += delta.x() * 0.45f;
+    pitchDegrees_ = std::clamp(pitchDegrees_ + delta.y() * 0.35f, -85.0f, 85.0f);
+    update();
+    event->accept();
+}
+
+void VolumeViewport3D::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (contourDrawing_ && event->button() == Qt::LeftButton) {
+        contourDrawing_ = false;
+        if (pendingContour_.size() < 3) {
+            pendingContour_.clear();
+            selectionStatusText_ = tr("Contour too small. Draw a closed contour around the nucleus.");
+            selectionStatusWarning_ = true;
+        } else {
+            selectionStatusText_ = tr("Contour captured. Click Accept Contour to build the 3D beam.");
+            selectionStatusWarning_ = false;
+        }
+        emit selectionStateChanged();
+        update();
+        event->accept();
+        return;
+    }
+
+    QOpenGLWidget::mouseReleaseEvent(event);
+}
+
+void VolumeViewport3D::wheelEvent(QWheelEvent *event)
+{
+    const double steps = event->angleDelta().y() / 120.0;
+    distance_ = std::clamp(distance_ * std::pow(0.85f, static_cast<float>(steps)), 1.2f, 8.0f);
+    update();
+    event->accept();
+}
+
+QMatrix4x4 VolumeViewport3D::currentModelViewProjection() const
+{
+    QMatrix4x4 projection;
+    projection.perspective(45.0f, float(width()) / std::max(1, height()), 0.1f, 20.0f);
+
+    QMatrix4x4 view;
+    view.lookAt(cameraPositionObject(), QVector3D(0.0f, 0.0f, 0.0f), QVector3D(0.0f, 1.0f, 0.0f));
+    return projection * view;
+}
+
+VolumeViewport3D::ProjectionConstraint VolumeViewport3D::capturePendingConstraint() const
+{
+    ProjectionConstraint constraint;
+    if (!hasPendingConstraint()) {
+        return constraint;
+    }
+
+    constraint.viewportSize = size();
+    constraint.contour = pendingContour_;
+    constraint.maskImage = rasterizedContourMask(constraint.viewportSize, pendingContour_);
+    constraint.modelViewProjection = currentModelViewProjection();
+    constraint.boundsMin = contentBoundsMin_;
+    constraint.boundsMax = contentBoundsMax_;
+    constraint.texMin = contentTexMin_;
+    constraint.texMax = contentTexMax_;
+    return constraint;
+}
+
+QVector3D VolumeViewport3D::voxelObjectPosition(int x,
+                                                int y,
+                                                int z,
+                                                const QVector3D &boundsMin,
+                                                const QVector3D &boundsMax,
+                                                const QVector3D &texMin,
+                                                const QVector3D &texMax) const
+{
+    return voxelObjectPositionForConstraint(volume_, x, y, z, boundsMin, boundsMax, texMin, texMax);
+}
+
+void VolumeViewport3D::rebuildOverlaySamples()
+{
+    latestOverlaySamples_.clear();
+    fusedOverlaySamples_.clear();
+    rebuildOverlaySamplesForMask(latestMask_, &latestOverlaySamples_, 2500);
+    rebuildOverlaySamplesForMask(fusedMask_, &fusedOverlaySamples_, 4000);
+}
+
+void VolumeViewport3D::rebuildOverlaySamplesForMask(const SelectionMask3D &mask,
+                                                    QVector<QVector3D> *samples,
+                                                    int targetSampleCount) const
+{
+    if (!samples || !mask.isValid() || mask.selectedVoxelCount <= 0) {
+        return;
+    }
+
+    const double density = std::max(1.0, static_cast<double>(mask.selectedVoxelCount) / std::max(targetSampleCount, 1));
+    const int step = std::max(1, static_cast<int>(std::cbrt(density)));
+    samples->reserve(std::min(targetSampleCount, static_cast<int>(mask.selectedVoxelCount)));
+
+    const auto isSelected = [&mask](int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 || x >= mask.width || y >= mask.height || z >= mask.depth) {
+            return false;
+        }
+
+        const qsizetype voxelIndex = (static_cast<qsizetype>(z) * mask.width * mask.height)
+                                   + (static_cast<qsizetype>(y) * mask.width)
+                                   + x;
+        return mask.voxels.at(static_cast<int>(voxelIndex)) != 0;
+    };
+
+    const auto isSurfaceVoxel = [&isSelected](int x, int y, int z) {
+        return !isSelected(x - 1, y, z)
+            || !isSelected(x + 1, y, z)
+            || !isSelected(x, y - 1, z)
+            || !isSelected(x, y + 1, z)
+            || !isSelected(x, y, z - 1)
+            || !isSelected(x, y, z + 1);
+    };
+
+    for (int z = 0; z < mask.depth; z += step) {
+        for (int y = 0; y < mask.height; y += step) {
+            for (int x = 0; x < mask.width; x += step) {
+                const qsizetype voxelIndex = (static_cast<qsizetype>(z) * mask.width * mask.height)
+                                           + (static_cast<qsizetype>(y) * mask.width)
+                                           + x;
+                if (mask.voxels.at(static_cast<int>(voxelIndex)) == 0) {
+                    continue;
+                }
+                if (!isSurfaceVoxel(x, y, z)) {
+                    continue;
+                }
+
+                samples->push_back(voxelObjectPosition(static_cast<int>(x),
+                                                      static_cast<int>(y),
+                                                      static_cast<int>(z),
+                                                      contentBoundsMin_,
+                                                      contentBoundsMax_,
+                                                      contentTexMin_,
+                                                      contentTexMax_));
+                if (samples->size() >= targetSampleCount) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+void VolumeViewport3D::startSelectionComputation(const QVector<ProjectionConstraint> &constraints)
+{
+    if (!volume_.isValid() || constraints.isEmpty() || selectionWatcher_.isRunning()) {
+        return;
+    }
+
+    pendingSelectionConstraints_ = constraints;
+    selectionStatusText_ = constraints.size() == 1
+                               ? tr("Building the first 3D beam…")
+                               : tr("Intersecting %1 view constraints…").arg(constraints.size());
+    selectionStatusWarning_ = false;
+    emit selectionStateChanged();
+
+    const RawVolume volume = volume_;
+    selectionWatcher_.setFuture(QtConcurrent::run([volume, constraints]() {
+        return computeSelectionFromConstraints(volume, constraints);
+    }));
+}
+
+void VolumeViewport3D::handleSelectionComputationFinished()
+{
+    const SelectionComputationResult result = selectionWatcher_.result();
+    if (!result.success) {
+        selectionStatusText_ = tr("The contour selection could not be reconstructed.");
+        selectionStatusWarning_ = true;
+        emit selectionStateChanged();
+        update();
+        return;
+    }
+
+    acceptedConstraints_ = pendingSelectionConstraints_;
+    latestMask_ = result.latestMask;
+    fusedMask_ = result.fusedMask;
+    rebuildOverlaySamples();
+
+    if (!result.warning.isEmpty()) {
+        selectionStatusText_ = result.warning;
+        selectionStatusWarning_ = true;
+    } else if (acceptedConstraints_.size() == 1) {
+        selectionStatusText_ = tr("1 view captured. Rotate and add another view to refine the nucleus.");
+        selectionStatusWarning_ = false;
+    } else {
+        selectionStatusText_ = tr("%1 views fused.").arg(acceptedConstraints_.size());
+        selectionStatusWarning_ = false;
+    }
+
+    emit selectionStateChanged();
+    update();
 }
 
 void VolumeViewport3D::ensurePointCloud()
@@ -617,35 +1242,6 @@ void VolumeViewport3D::ensurePointCloud()
     pointCloudDirty_ = false;
 }
 
-void VolumeViewport3D::mousePressEvent(QMouseEvent *event)
-{
-    lastMousePosition_ = event->pos();
-    event->accept();
-}
-
-void VolumeViewport3D::mouseMoveEvent(QMouseEvent *event)
-{
-    if (!(event->buttons() & Qt::LeftButton)) {
-        QWidget::mouseMoveEvent(event);
-        return;
-    }
-
-    const QPoint delta = event->pos() - lastMousePosition_;
-    lastMousePosition_ = event->pos();
-    yawDegrees_ += delta.x() * 0.45f;
-    pitchDegrees_ = std::clamp(pitchDegrees_ + delta.y() * 0.35f, -85.0f, 85.0f);
-    update();
-    event->accept();
-}
-
-void VolumeViewport3D::wheelEvent(QWheelEvent *event)
-{
-    const double steps = event->angleDelta().y() / 120.0;
-    distance_ = std::clamp(distance_ * std::pow(0.85f, static_cast<float>(steps)), 1.2f, 8.0f);
-    update();
-    event->accept();
-}
-
 void VolumeViewport3D::ensureTextures()
 {
     if (!texturesDirty_ || !volume_.isValid()) {
@@ -761,4 +1357,123 @@ QVector3D VolumeViewport3D::cameraPositionObject() const
 int VolumeViewport3D::effectiveChannelCount() const
 {
     return std::min({volume_.components, static_cast<int>(channelSettings_.size()), kMaxVolumeChannels});
+}
+
+int VolumeViewport3D::activeSelectionChannelCount() const
+{
+    int enabledCount = 0;
+    for (const ChannelRenderSettings &settings : channelSettings_) {
+        enabledCount += settings.enabled ? 1 : 0;
+    }
+    return enabledCount;
+}
+
+QColor VolumeViewport3D::selectionOverlayColor() const
+{
+    for (const ChannelRenderSettings &settings : channelSettings_) {
+        if (!settings.enabled) {
+            continue;
+        }
+
+        QColor overlay = QColor::fromRgbF(1.0 - settings.color.redF(),
+                                          1.0 - settings.color.greenF(),
+                                          1.0 - settings.color.blueF());
+        if (overlay.lightnessF() < 0.35) {
+            overlay = overlay.lighter(160);
+        }
+        if (overlay.saturationF() < 0.35) {
+            overlay.setHsvF(static_cast<float>(std::fmod(settings.color.hsvHueF() + 0.5, 1.0)), 0.85f, 1.0f);
+        }
+        return overlay;
+    }
+
+    return QColor(255, 220, 120);
+}
+
+void VolumeViewport3D::drawOverlay(QPainter &painter)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor overlayColor = selectionOverlayColor();
+    const qreal fusedOpacity = selectionOverlayOpacity_;
+    const qreal latestOpacity = std::clamp(fusedOpacity * 0.35, 0.08, 0.45);
+    const qreal pendingFillOpacity = std::clamp(fusedOpacity * 0.25, 0.04, 0.25);
+    QColor pendingStrokeColor = overlayColor;
+    pendingStrokeColor.setAlphaF(fusedOpacity);
+
+    if (acceptedConstraints_.size() > 1) {
+        drawProjectedMask(painter, latestOverlaySamples_, overlayColor, 3, latestOpacity);
+    }
+    drawProjectedMask(painter, fusedOverlaySamples_, overlayColor, 4, fusedOpacity);
+
+    if (!pendingContour_.isEmpty()) {
+        QPainterPath path;
+        path.addPolygon(pendingContour_);
+        painter.setPen(QPen(pendingStrokeColor, 2.0));
+        QColor fillColor = overlayColor;
+        fillColor.setAlphaF(pendingFillOpacity);
+        painter.fillPath(path, fillColor);
+        painter.drawPath(path);
+    }
+
+    const QString overlayText = contourCaptureActive_
+                                    ? tr("Contour mode: drag around the nucleus, then click Accept Contour.")
+                                    : tr("3D Select: use Add View to add another contour constraint.");
+    QRectF textRect = painter.boundingRect(QRectF(0, 0, width() - 24.0, 64.0),
+                                           Qt::TextWordWrap,
+                                           overlayText);
+    textRect.moveLeft(12.0);
+    textRect.moveBottom(height() - 12.0);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 130));
+    painter.drawRoundedRect(textRect.adjusted(-8.0, -6.0, 8.0, 6.0), 8.0, 8.0);
+    painter.setPen(QColor(240, 240, 240));
+    painter.drawText(textRect, Qt::TextWordWrap, overlayText);
+
+    painter.restore();
+}
+
+void VolumeViewport3D::drawProjectedMask(QPainter &painter,
+                                         const QVector<QVector3D> &voxels,
+                                         const QColor &color,
+                                         int pixelRadius,
+                                         qreal opacity) const
+{
+    if (voxels.isEmpty() || !volume_.isValid()) {
+        return;
+    }
+
+    const QMatrix4x4 mvp = currentModelViewProjection();
+    QVector<QPointF> points;
+    points.reserve(voxels.size());
+
+    for (const QVector3D &objectPosition : voxels) {
+        const QVector4D clipPosition = mvp * QVector4D(objectPosition, 1.0f);
+        if (clipPosition.w() <= 1.0e-6f) {
+            continue;
+        }
+
+        const QVector3D ndc(clipPosition.x() / clipPosition.w(),
+                            clipPosition.y() / clipPosition.w(),
+                            clipPosition.z() / clipPosition.w());
+        if (ndc.x() < -1.0f || ndc.x() > 1.0f || ndc.y() < -1.0f || ndc.y() > 1.0f || ndc.z() < -1.0f || ndc.z() > 1.0f) {
+            continue;
+        }
+
+        points.push_back(QPointF((ndc.x() * 0.5f + 0.5f) * static_cast<float>(width()),
+                                 (1.0f - (ndc.y() * 0.5f + 0.5f)) * static_cast<float>(height())));
+    }
+
+    if (points.isEmpty()) {
+        return;
+    }
+
+    QColor projectedColor = color;
+    projectedColor.setAlphaF(opacity);
+    QPen pen(projectedColor);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setWidth(pixelRadius);
+    painter.setPen(pen);
+    painter.drawPoints(points.constData(), points.size());
 }

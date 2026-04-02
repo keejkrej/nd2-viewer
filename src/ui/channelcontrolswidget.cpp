@@ -4,7 +4,10 @@
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -16,6 +19,36 @@ Nd2ChannelInfo fallbackChannelInfo(int index, const QString &name)
     channel.index = index;
     channel.name = name;
     return channel;
+}
+
+QIcon settingsIcon(const QWidget *widget)
+{
+    constexpr int iconSize = 16;
+    QPixmap pixmap(iconSize, iconSize);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.translate(iconSize / 2.0, iconSize / 2.0);
+
+    QPen pen(widget->palette().buttonText().color());
+    pen.setWidthF(1.4);
+    pen.setCapStyle(Qt::RoundCap);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    constexpr int spokeCount = 8;
+    for (int index = 0; index < spokeCount; ++index) {
+        painter.save();
+        painter.rotate(index * (360.0 / spokeCount));
+        painter.drawLine(QPointF(0.0, -6.0), QPointF(0.0, -4.0));
+        painter.restore();
+    }
+
+    painter.drawEllipse(QPointF(0.0, 0.0), 4.2, 4.2);
+    painter.drawEllipse(QPointF(0.0, 0.0), 1.6, 1.6);
+
+    return QIcon(pixmap);
 }
 } // namespace
 
@@ -37,6 +70,13 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     nameLabel_ = new QLabel(tr("Channel"), this);
     nameLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     autoCheck_ = new QCheckBox(tr("Live auto"), this);
+    tuneButton_ = new QPushButton(this);
+    tuneButton_->setIcon(settingsIcon(this));
+    tuneButton_->setToolTip(tr("Tune live auto percentiles"));
+    tuneButton_->setAccessibleName(tr("Tune live auto"));
+    tuneButton_->setFixedSize(28, 28);
+    tuneButton_->setIconSize(QSize(16, 16));
+    tuneButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     autoButton_ = new QPushButton(tr("Auto now"), this);
     autoButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
@@ -44,6 +84,7 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     headerLayout->addWidget(colorSwatch_);
     headerLayout->addWidget(nameLabel_);
     headerLayout->addWidget(autoCheck_);
+    headerLayout->addWidget(tuneButton_);
     headerLayout->addWidget(autoButton_);
 
     auto *rangeLayout = new QHBoxLayout();
@@ -99,18 +140,14 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     connect(lowSpinBox_, &QDoubleSpinBox::valueChanged, this, [onSpinBoxChanged](double) { onSpinBoxChanged(); });
     connect(highSpinBox_, &QDoubleSpinBox::valueChanged, this, [onSpinBoxChanged](double) { onSpinBoxChanged(); });
 
-    connect(autoButton_, &QPushButton::clicked, this, [this]() {
-        if (!autoCheck_->isChecked()) {
-            autoCheck_->setChecked(true);
-            return;
-        }
-        emit autoContrastRequested();
-    });
+    connect(autoButton_, &QPushButton::clicked, this, [this]() { emit autoContrastRequested(); });
+    connect(tuneButton_, &QPushButton::clicked, this, [this]() { emit autoContrastTuningRequested(); });
 }
 
 void ChannelRowWidget::setChannel(const Nd2ChannelInfo &channel, const ChannelRenderSettings &settings)
 {
     updating_ = true;
+    settings_ = settings;
 
     enabledCheck_->setChecked(settings.enabled);
     autoCheck_->setChecked(settings.autoContrast);
@@ -124,7 +161,7 @@ void ChannelRowWidget::setChannel(const Nd2ChannelInfo &channel, const ChannelRe
 
 ChannelRenderSettings ChannelRowWidget::currentSettings() const
 {
-    ChannelRenderSettings settings;
+    ChannelRenderSettings settings = settings_;
     settings.enabled = enabledCheck_->isChecked();
     settings.autoContrast = autoCheck_->isChecked();
     settings.low = lowSpinBox_->value();
@@ -191,6 +228,9 @@ void ChannelControlsWidget::setChannels(const QVector<Nd2ChannelInfo> &channels,
         });
         connect(row, &ChannelRowWidget::autoContrastRequested, this, [this, index]() {
             emit autoContrastRequested(index);
+        });
+        connect(row, &ChannelRowWidget::autoContrastTuningRequested, this, [this, index]() {
+            emit autoContrastTuningRequested(index);
         });
     }
 }

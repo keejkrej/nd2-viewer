@@ -22,6 +22,7 @@ public:
 signals:
     void settingsEdited(const ChannelRenderSettings &settings);
     void autoContrastRequested();
+    void autoContrastTuningRequested();
 
 private:
     [[nodiscard]] ChannelRenderSettings currentSettings() const;
@@ -36,6 +37,8 @@ private:
     QDoubleSpinBox *lowSpinBox_ = nullptr;
     QDoubleSpinBox *highSpinBox_ = nullptr;
     QPushButton *autoButton_ = nullptr;
+    QPushButton *tuneButton_ = nullptr;
+    ChannelRenderSettings settings_;
 };
 
 class ChannelControlsWidget : public QWidget
@@ -51,6 +54,7 @@ public:
 signals:
     void channelSettingsChanged(int index, const ChannelRenderSettings &settings);
     void autoContrastRequested(int index);
+    void autoContrastTuningRequested(int index);
     void autoContrastAllRequested();
 
 private:

@@ -28,6 +28,8 @@
 #include <QMediaFormat>
 #include <QMediaRecorder>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -38,6 +40,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStandardPaths>
+#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -52,6 +55,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 
 namespace
 {
@@ -235,8 +239,6 @@ public:
     MovieExportDialog(const MovieExportSettings &baseSettings,
                       const QImage &sampleImage,
                       int timeLoopSize,
-                      int currentTimeFrame,
-                      const QString &defaultPath,
                       bool exportRoi,
                       QWidget *parent = nullptr)
         : QDialog(parent)
@@ -250,27 +252,17 @@ public:
 
         auto *layout = new QVBoxLayout(this);
         auto *intro = new QLabel(exportRoi
-                                     ? tr("Export the current ROI as a rendered MP4. Start/end/skip apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed.")
-                                     : tr("Export the current rendered frame view as an MP4. Start/end/skip apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed."),
+                                     ? tr("Export the current ROI as a rendered MP4. Start, end, and step apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed.")
+                                     : tr("Export the current rendered frame view as an MP4. Start, end, and step apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed."),
                                  this);
         intro->setWordWrap(true);
         layout->addWidget(intro);
 
         auto *formLayout = new QFormLayout();
 
-        auto *pathRow = new QWidget(this);
-        auto *pathLayout = new QHBoxLayout(pathRow);
-        pathLayout->setContentsMargins(0, 0, 0, 0);
-        outputPathEdit_ = new QLineEdit(defaultPath, pathRow);
-        auto *browseButton = new QToolButton(pathRow);
-        browseButton->setText(tr("..."));
-        pathLayout->addWidget(outputPathEdit_, 1);
-        pathLayout->addWidget(browseButton);
-        formLayout->addRow(tr("Output"), pathRow);
-
         startFrameSpin_ = new QSpinBox(this);
         startFrameSpin_->setRange(0, qMax(timeLoopSize_ - 1, 0));
-        startFrameSpin_->setValue(std::clamp(currentTimeFrame, 0, qMax(timeLoopSize_ - 1, 0)));
+        startFrameSpin_->setValue(0);
         formLayout->addRow(tr("Start frame (0-based)"), startFrameSpin_);
 
         endFrameSpin_ = new QSpinBox(this);
@@ -278,10 +270,10 @@ public:
         endFrameSpin_->setValue(qMax(timeLoopSize_ - 1, 0));
         formLayout->addRow(tr("End frame (0-based)"), endFrameSpin_);
 
-        skipFramesSpin_ = new QSpinBox(this);
-        skipFramesSpin_->setRange(0, qMax(timeLoopSize_ - 1, 0));
-        skipFramesSpin_->setValue(0);
-        formLayout->addRow(tr("Skip frames"), skipFramesSpin_);
+        stepSpin_ = new QSpinBox(this);
+        stepSpin_->setRange(1, qMax(timeLoopSize_, 1));
+        stepSpin_->setValue(qMax(baseSettings_.step, 1));
+        formLayout->addRow(tr("Step"), stepSpin_);
 
         fpsSpin_ = new QDoubleSpinBox(this);
         fpsSpin_->setRange(0.1, 240.0);
@@ -318,16 +310,6 @@ public:
         estimateDebounceTimer_->setInterval(150);
         connect(estimateDebounceTimer_, &QTimer::timeout, this, [this]() { refreshEstimate(); });
 
-        connect(browseButton, &QToolButton::clicked, this, [this]() {
-            const QString selectedPath = QFileDialog::getSaveFileName(this,
-                                                                      tr("Save Movie"),
-                                                                      currentSettings().outputPath,
-                                                                      tr("MP4 Video (*.mp4)"));
-            if (!selectedPath.isEmpty()) {
-                outputPathEdit_->setText(selectedPath);
-            }
-        });
-        connect(outputPathEdit_, &QLineEdit::textChanged, this, [this]() { updateContinueEnabled(); });
         connect(startFrameSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
             if (endFrameSpin_->value() < value) {
                 endFrameSpin_->setValue(value);
@@ -340,7 +322,7 @@ public:
             }
             scheduleEstimateRefresh();
         });
-        connect(skipFramesSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this]() { scheduleEstimateRefresh(); });
+        connect(stepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this]() { scheduleEstimateRefresh(); });
         connect(fpsSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]() { scheduleEstimateRefresh(); });
 
         refreshEstimate();
@@ -351,18 +333,8 @@ public:
         MovieExportSettings settings = baseSettings_;
         settings.startFrame = startFrameSpin_->value();
         settings.endFrame = endFrameSpin_->value();
-        settings.skipFrames = skipFramesSpin_->value();
+        settings.step = stepSpin_->value();
         settings.fps = fpsSpin_->value();
-        QString outputPath = outputPathEdit_->text().trimmed();
-        if (!outputPath.isEmpty()) {
-            const QFileInfo outputInfo(outputPath);
-            if (outputInfo.suffix().isEmpty()) {
-                outputPath += QStringLiteral(".mp4");
-            } else if (outputInfo.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
-                outputPath = outputInfo.dir().filePath(outputInfo.completeBaseName() + QStringLiteral(".mp4"));
-            }
-        }
-        settings.outputPath = outputPath;
         return settings;
     }
 
@@ -405,16 +377,15 @@ private:
 
     void updateContinueEnabled()
     {
-        continueButton_->setEnabled(currentEstimate_.valid && !currentSettings().outputPath.isEmpty());
+        continueButton_->setEnabled(currentEstimate_.valid);
     }
 
     MovieExportSettings baseSettings_;
     QImage sampleImage_;
     int timeLoopSize_ = 0;
-    QLineEdit *outputPathEdit_ = nullptr;
     QSpinBox *startFrameSpin_ = nullptr;
     QSpinBox *endFrameSpin_ = nullptr;
-    QSpinBox *skipFramesSpin_ = nullptr;
+    QSpinBox *stepSpin_ = nullptr;
     QDoubleSpinBox *fpsSpin_ = nullptr;
     QLabel *outputSizeLabel_ = nullptr;
     QLabel *frameCountLabel_ = nullptr;
@@ -424,6 +395,325 @@ private:
     QPushButton *continueButton_ = nullptr;
     QTimer *estimateDebounceTimer_ = nullptr;
     MovieExportEstimate currentEstimate_;
+};
+
+class HistogramWidget : public QWidget
+{
+public:
+    explicit HistogramWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumHeight(220);
+        setMouseTracking(true);
+    }
+
+    void setHistogram(const QVector<quint64> &bins, double minimumValue, double maximumValue)
+    {
+        bins_ = bins;
+        minimumValue_ = minimumValue;
+        maximumValue_ = maximumValue;
+        update();
+    }
+
+    void setLevels(double lowValue, double highValue)
+    {
+        lowValue_ = lowValue;
+        highValue_ = highValue;
+        update();
+    }
+
+    void setLevelsChangedCallback(std::function<void(double, double, bool)> callback)
+    {
+        levelsChangedCallback_ = std::move(callback);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QWidget::paintEvent(event);
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.fillRect(rect(), palette().window());
+
+        const QRectF plot = plotRect();
+        painter.fillRect(plot, palette().base());
+        painter.setPen(palette().mid().color());
+        painter.drawRect(plot);
+
+        if (bins_.isEmpty()) {
+            painter.setPen(palette().text().color());
+            painter.drawText(plot, Qt::AlignCenter, tr("Histogram unavailable"));
+            return;
+        }
+
+        const quint64 maxCount = qMax<quint64>(1, *std::max_element(bins_.cbegin(), bins_.cend()));
+        const double barWidth = plot.width() / bins_.size();
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(90, 150, 210));
+        for (int index = 0; index < bins_.size(); ++index) {
+            const double barHeight = plot.height() * (static_cast<double>(bins_.at(index)) / maxCount);
+            const QRectF bar(plot.left() + (index * barWidth),
+                             plot.bottom() - barHeight,
+                             qMax(1.0, barWidth - 1.0),
+                             barHeight);
+            painter.drawRect(bar);
+        }
+
+        painter.setPen(QPen(QColor(230, 140, 40), 2.0));
+        painter.drawLine(QPointF(valueToX(lowValue_), plot.top()), QPointF(valueToX(lowValue_), plot.bottom()));
+        painter.setPen(QPen(QColor(40, 180, 180), 2.0));
+        painter.drawLine(QPointF(valueToX(highValue_), plot.top()), QPointF(valueToX(highValue_), plot.bottom()));
+
+        painter.setPen(palette().text().color());
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 6.0, plot.width() / 2.0, 18.0),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         QString::number(minimumValue_, 'g', 6));
+        painter.drawText(QRectF(plot.center().x(), plot.bottom() + 6.0, plot.width() / 2.0, 18.0),
+                         Qt::AlignRight | Qt::AlignVCenter,
+                         QString::number(maximumValue_, 'g', 6));
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton || bins_.isEmpty()) {
+            QWidget::mousePressEvent(event);
+            return;
+        }
+
+        dragHandle_ = pickHandle(event->position().x());
+        updateDraggedLevel(event->position().x(), false);
+        event->accept();
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (dragHandle_ == DragHandle::None) {
+            QWidget::mouseMoveEvent(event);
+            return;
+        }
+
+        updateDraggedLevel(event->position().x(), false);
+        event->accept();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && dragHandle_ != DragHandle::None) {
+            updateDraggedLevel(event->position().x(), true);
+            dragHandle_ = DragHandle::None;
+            event->accept();
+            return;
+        }
+
+        QWidget::mouseReleaseEvent(event);
+    }
+
+private:
+    enum class DragHandle
+    {
+        None,
+        Low,
+        High
+    };
+
+    [[nodiscard]] QRectF plotRect() const
+    {
+        const QRect area = contentsRect();
+        return QRectF(area.adjusted(12, 12, -12, -28));
+    }
+
+    [[nodiscard]] double valueToX(double value) const
+    {
+        const QRectF plot = plotRect();
+        if (plot.width() <= 0.0) {
+            return plot.left();
+        }
+
+        if (qFuzzyCompare(minimumValue_ + 1.0, maximumValue_ + 1.0)) {
+            return plot.center().x();
+        }
+
+        const double normalized = std::clamp((value - minimumValue_) / (maximumValue_ - minimumValue_), 0.0, 1.0);
+        return plot.left() + (normalized * plot.width());
+    }
+
+    [[nodiscard]] double xToValue(double x) const
+    {
+        const QRectF plot = plotRect();
+        if (plot.width() <= 0.0 || qFuzzyCompare(minimumValue_ + 1.0, maximumValue_ + 1.0)) {
+            return minimumValue_;
+        }
+
+        const double normalized = std::clamp((x - plot.left()) / plot.width(), 0.0, 1.0);
+        return minimumValue_ + (normalized * (maximumValue_ - minimumValue_));
+    }
+
+    [[nodiscard]] DragHandle pickHandle(double x) const
+    {
+        const double lowDistance = std::abs(x - valueToX(lowValue_));
+        const double highDistance = std::abs(x - valueToX(highValue_));
+        return lowDistance <= highDistance ? DragHandle::Low : DragHandle::High;
+    }
+
+    void updateDraggedLevel(double x, bool commitPreview)
+    {
+        const double value = xToValue(x);
+        if (dragHandle_ == DragHandle::Low) {
+            lowValue_ = std::min(value, highValue_);
+        } else if (dragHandle_ == DragHandle::High) {
+            highValue_ = std::max(value, lowValue_);
+        }
+
+        update();
+        if (levelsChangedCallback_) {
+            levelsChangedCallback_(lowValue_, highValue_, commitPreview);
+        }
+    }
+
+    QVector<quint64> bins_;
+    double minimumValue_ = 0.0;
+    double maximumValue_ = 1.0;
+    double lowValue_ = 0.0;
+    double highValue_ = 1.0;
+    DragHandle dragHandle_ = DragHandle::None;
+    std::function<void(double, double, bool)> levelsChangedCallback_;
+};
+
+class AutoContrastTuningDialog : public QDialog
+{
+public:
+    AutoContrastTuningDialog(const QString &channelName,
+                             const ChannelAutoContrastAnalysis &analysis,
+                             const ChannelRenderSettings &initialSettings,
+                             QWidget *parent = nullptr)
+        : QDialog(parent)
+        , analysis_(analysis)
+        , settings_(initialSettings)
+    {
+        setWindowTitle(tr("Tune Live Auto - %1").arg(channelName));
+        setModal(true);
+        resize(620, 0);
+
+        auto *layout = new QVBoxLayout(this);
+        auto *intro = new QLabel(tr("Adjust the min and max percentiles for this channel. The histogram uses a sampled snapshot of the current frame."), this);
+        intro->setWordWrap(true);
+        layout->addWidget(intro);
+
+        histogramWidget_ = new HistogramWidget(this);
+        histogramWidget_->setHistogram(analysis_.histogramBins, analysis_.minimumValue, analysis_.maximumValue);
+        layout->addWidget(histogramWidget_);
+
+        auto *inputsRow = new QWidget(this);
+        auto *inputsLayout = new QHBoxLayout(inputsRow);
+        inputsLayout->setContentsMargins(0, 0, 0, 0);
+        inputsLayout->setSpacing(8);
+
+        auto *minLabel = new QLabel(tr("Min percentile"), inputsRow);
+        minPercentileSpinBox_ = new QDoubleSpinBox(inputsRow);
+        minPercentileSpinBox_->setDecimals(3);
+        minPercentileSpinBox_->setRange(0.0, 100.0);
+        minPercentileSpinBox_->setSingleStep(0.1);
+
+        auto *maxLabel = new QLabel(tr("Max percentile"), inputsRow);
+        maxPercentileSpinBox_ = new QDoubleSpinBox(inputsRow);
+        maxPercentileSpinBox_->setDecimals(3);
+        maxPercentileSpinBox_->setRange(0.0, 100.0);
+        maxPercentileSpinBox_->setSingleStep(0.1);
+
+        thresholdLabel_ = new QLabel(this);
+
+        inputsLayout->addWidget(minLabel);
+        inputsLayout->addWidget(minPercentileSpinBox_, 1);
+        inputsLayout->addWidget(maxLabel);
+        inputsLayout->addWidget(maxPercentileSpinBox_, 1);
+        layout->addWidget(inputsRow);
+        layout->addWidget(thresholdLabel_);
+
+        auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttonBox);
+
+        connect(minPercentileSpinBox_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+            setPercentiles(value, settings_.highPercentile, true);
+        });
+        connect(maxPercentileSpinBox_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+            setPercentiles(settings_.lowPercentile, value, true);
+        });
+
+        histogramWidget_->setLevelsChangedCallback([this](double lowValue, double highValue, bool commitPreview) {
+            const double lowPercentile = FrameRenderer::valueToPercentile(analysis_, lowValue);
+            const double highPercentile = FrameRenderer::valueToPercentile(analysis_, highValue);
+            setPercentiles(lowPercentile, highPercentile, commitPreview);
+        });
+
+        setPercentiles(settings_.lowPercentile, settings_.highPercentile, false);
+    }
+
+    void setPreviewCallback(std::function<void(const ChannelRenderSettings &)> callback)
+    {
+        previewCallback_ = std::move(callback);
+    }
+
+    [[nodiscard]] ChannelRenderSettings currentSettings() const
+    {
+        return settings_;
+    }
+
+private:
+    void setPercentiles(double lowPercentile, double highPercentile, bool emitPreview)
+    {
+        sanitizePercentiles(lowPercentile, highPercentile);
+        settings_.lowPercentile = lowPercentile;
+        settings_.highPercentile = highPercentile;
+
+        const QSignalBlocker minBlocker(minPercentileSpinBox_);
+        const QSignalBlocker maxBlocker(maxPercentileSpinBox_);
+        minPercentileSpinBox_->setValue(settings_.lowPercentile);
+        maxPercentileSpinBox_->setValue(settings_.highPercentile);
+
+        FrameRenderer::applyAutoContrastToChannel(analysis_, settings_);
+        histogramWidget_->setLevels(settings_.low, settings_.high);
+        thresholdLabel_->setText(tr("Current thresholds: low=%1   high=%2")
+                                     .arg(QString::number(settings_.low, 'g', 6),
+                                          QString::number(settings_.high, 'g', 6)));
+
+        if (emitPreview && previewCallback_) {
+            previewCallback_(settings_);
+        }
+    }
+
+    void sanitizePercentiles(double &lowPercentile, double &highPercentile) const
+    {
+        constexpr double minimumGap = 0.001;
+
+        lowPercentile = std::clamp(lowPercentile, 0.0, 100.0);
+        highPercentile = std::clamp(highPercentile, 0.0, 100.0);
+
+        if (highPercentile - lowPercentile >= minimumGap) {
+            return;
+        }
+
+        if (lowPercentile >= 100.0) {
+            lowPercentile = 100.0 - minimumGap;
+            highPercentile = 100.0;
+            return;
+        }
+
+        highPercentile = std::min(100.0, lowPercentile + minimumGap);
+        if (highPercentile - lowPercentile < minimumGap) {
+            lowPercentile = std::max(0.0, highPercentile - minimumGap);
+        }
+    }
+
+    ChannelAutoContrastAnalysis analysis_;
+    ChannelRenderSettings settings_;
+    HistogramWidget *histogramWidget_ = nullptr;
+    QDoubleSpinBox *minPercentileSpinBox_ = nullptr;
+    QDoubleSpinBox *maxPercentileSpinBox_ = nullptr;
+    QLabel *thresholdLabel_ = nullptr;
+    std::function<void(const ChannelRenderSettings &)> previewCallback_;
 };
 } // namespace
 
@@ -463,6 +753,8 @@ MainWindow::MainWindow(QWidget *parent)
             &controller_, &DocumentController::setChannelSettings);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastRequested,
             &controller_, &DocumentController::autoContrastChannel);
+    connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested,
+            this, &MainWindow::openAutoContrastTuningDialog);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastAllRequested,
             &controller_, &DocumentController::autoContrastAllChannels);
 
@@ -571,6 +863,45 @@ void MainWindow::exportMovieAs()
 void MainWindow::exportRoiMovieAs()
 {
     exportMovieSelection(ExportScope::Roi);
+}
+
+void MainWindow::openAutoContrastTuningDialog(int channelIndex)
+{
+    const QVector<ChannelRenderSettings> settings = controller_.channelSettings();
+    if (channelIndex < 0 || channelIndex >= settings.size()) {
+        return;
+    }
+
+    const RawFrame &rawFrame = controller_.currentRawFrame();
+    if (!rawFrame.isValid()) {
+        statusBar()->showMessage(tr("Load a frame before tuning live auto contrast."), 5000);
+        return;
+    }
+
+    const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(rawFrame, channelIndex);
+    if (!analysis.isValid()) {
+        QMessageBox::warning(this,
+                             tr("Live Auto"),
+                             tr("A histogram could not be prepared for the current frame."));
+        return;
+    }
+
+    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const QString channelName = (channelIndex < info.channels.size() && !info.channels.at(channelIndex).name.isEmpty())
+                                    ? info.channels.at(channelIndex).name
+                                    : tr("Channel %1").arg(channelIndex + 1);
+    const ChannelRenderSettings originalSettings = settings.at(channelIndex);
+
+    AutoContrastTuningDialog dialog(channelName, analysis, originalSettings, this);
+    dialog.setPreviewCallback([this, channelIndex](const ChannelRenderSettings &previewSettings) {
+        controller_.setChannelSettings(channelIndex, previewSettings);
+    });
+
+    if (dialog.exec() == QDialog::Accepted) {
+        return;
+    }
+
+    controller_.setChannelSettings(channelIndex, originalSettings);
 }
 
 void MainWindow::exportCurrentSelection(ExportScope scope)
@@ -708,14 +1039,9 @@ void MainWindow::exportMovieSelection(ExportScope scope)
                                    : currentImage;
 
     const Nd2LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
-    const int currentTimeFrame = (timeLoopIndex < controller_.coordinateState().values.size())
-                                     ? controller_.coordinateState().values.at(timeLoopIndex)
-                                     : 0;
     MovieExportDialog dialog(settings,
                              sampleImage,
                              timeLoop.size,
-                             currentTimeFrame,
-                             buildDefaultMovieSavePath(scope),
                              scope == ExportScope::Roi,
                              this);
     if (dialog.exec() != QDialog::Accepted) {
@@ -723,6 +1049,22 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     }
 
     settings = dialog.currentSettings();
+    QString selectedPath = QFileDialog::getSaveFileName(this,
+                                                        tr("Save Movie"),
+                                                        buildDefaultMovieSavePath(scope, settings),
+                                                        tr("MP4 Video (*.mp4)"));
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo outputInfo(selectedPath);
+    if (outputInfo.suffix().isEmpty()) {
+        selectedPath += QStringLiteral(".mp4");
+    } else if (outputInfo.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
+        selectedPath = outputInfo.dir().filePath(outputInfo.completeBaseName() + QStringLiteral(".mp4"));
+    }
+    settings.outputPath = selectedPath;
+
     const MovieExportEstimate estimate = dialog.currentEstimate();
     if (!estimate.valid) {
         QMessageBox::warning(this,
@@ -1364,11 +1706,51 @@ QString MainWindow::buildDefaultFrameSavePath(ExportScope scope, const QString &
     return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + extension);
 }
 
-QString MainWindow::buildDefaultMovieSavePath(ExportScope scope) const
+QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const
 {
-    QString path = buildDefaultFrameSavePath(scope, QStringLiteral(".mp4"));
-    QFileInfo info(path);
-    return info.dir().filePath(info.completeBaseName() + QStringLiteral("_movie.mp4"));
+    QString directory;
+    QString baseName = QStringLiteral("frame");
+
+    if (controller_.hasDocument()) {
+        const QFileInfo sourceInfo(controller_.currentPath());
+        directory = sourceInfo.absolutePath();
+        if (!sourceInfo.completeBaseName().isEmpty()) {
+            baseName = sourceInfo.completeBaseName();
+        }
+    }
+
+    if (directory.isEmpty()) {
+        directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    }
+    if (directory.isEmpty()) {
+        directory = QDir::homePath();
+    }
+
+    const Nd2DocumentInfo &info = controller_.documentInfo();
+    QStringList nameParts{sanitizeToken(baseName)};
+    for (int index = 0; index < info.loops.size() && index < settings.fixedCoordinates.size(); ++index) {
+        if (index == settings.timeLoopIndex) {
+            continue;
+        }
+
+        const QString label = sanitizeToken(info.loops.at(index).label);
+        nameParts << QStringLiteral("%1%2").arg(label, QString::number(settings.fixedCoordinates.at(index) + 1));
+    }
+    if (scope == ExportScope::Roi && imageViewport_->hasRoi()) {
+        const QRect roi = imageViewport_->roiRect();
+        nameParts << QStringLiteral("roi_x%1_y%2_w%3_h%4")
+                         .arg(roi.x())
+                         .arg(roi.y())
+                         .arg(roi.width())
+                         .arg(roi.height());
+    }
+
+    nameParts << QStringLiteral("movie_start%1_end%2_step%3")
+                     .arg(settings.startFrame)
+                     .arg(settings.endFrame)
+                     .arg(settings.frameStep());
+
+    return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + QStringLiteral(".mp4"));
 }
 
 int MainWindow::findTimeLoopIndex() const

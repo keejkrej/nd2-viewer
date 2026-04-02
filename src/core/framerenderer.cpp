@@ -1,12 +1,16 @@
 #include "core/framerenderer.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 
 namespace
 {
+constexpr double kMinimumPercentileGap = 0.001;
+
 double sampleValue(const RawFrame &frame, int x, int y, int component)
 {
     const int bytesPerComponent = frame.bytesPerComponent();
@@ -51,6 +55,54 @@ QColor defaultColorForIndex(int index)
     return colors.at(static_cast<size_t>(index) % colors.size());
 }
 
+int effectiveComponentIndex(const RawFrame &frame, int channelIndex)
+{
+    if (channelIndex < 0) {
+        return -1;
+    }
+
+    if (frame.components == 1) {
+        return 0;
+    }
+
+    if (channelIndex >= frame.components) {
+        return -1;
+    }
+
+    return channelIndex;
+}
+
+int samplingStep(const RawFrame &frame)
+{
+    return qMax(1, static_cast<int>(std::sqrt((frame.width * frame.height) / 200000.0)));
+}
+
+void sanitizePercentileRange(ChannelRenderSettings &settings)
+{
+    settings.lowPercentile = std::clamp(settings.lowPercentile, 0.0, 100.0);
+    settings.highPercentile = std::clamp(settings.highPercentile, 0.0, 100.0);
+
+    if (settings.highPercentile - settings.lowPercentile >= kMinimumPercentileGap) {
+        return;
+    }
+
+    if (settings.lowPercentile >= 100.0) {
+        settings.lowPercentile = 100.0 - kMinimumPercentileGap;
+        settings.highPercentile = 100.0;
+        return;
+    }
+
+    settings.highPercentile = std::min(100.0, settings.lowPercentile + kMinimumPercentileGap);
+    if (settings.highPercentile - settings.lowPercentile < kMinimumPercentileGap) {
+        settings.lowPercentile = std::max(0.0, settings.highPercentile - kMinimumPercentileGap);
+    }
+}
+
+double adjustedHighValue(double lowValue, double highValue)
+{
+    return highValue > lowValue ? highValue : lowValue + 1.0e-9;
+}
+
 double normalize(double value, const ChannelRenderSettings &settings)
 {
     const double denominator = settings.high - settings.low;
@@ -77,6 +129,8 @@ QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const Nd2Do
         channel.low = 0.0;
         channel.high = defaultHigh > 0.0 ? defaultHigh : 1.0;
         channel.autoContrast = true;
+        channel.lowPercentile = 0.1;
+        channel.highPercentile = 99.9;
         if (i < info.channels.size() && info.channels.at(i).color.isValid()) {
             channel.color = info.channels.at(i).color;
         } else {
@@ -86,6 +140,81 @@ QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const Nd2Do
     }
 
     return settings;
+}
+
+ChannelAutoContrastAnalysis FrameRenderer::analyzeChannel(const RawFrame &frame, int channelIndex, int histogramBinCount)
+{
+    ChannelAutoContrastAnalysis analysis;
+
+    if (!frame.isValid() || histogramBinCount <= 0) {
+        return analysis;
+    }
+
+    const int component = effectiveComponentIndex(frame, channelIndex);
+    if (component < 0) {
+        return analysis;
+    }
+
+    const int step = samplingStep(frame);
+    const int sampleColumns = (frame.width + step - 1) / step;
+    const int sampleRows = (frame.height + step - 1) / step;
+    QVector<double> samples;
+    samples.reserve(sampleColumns * sampleRows);
+
+    double minimum = std::numeric_limits<double>::max();
+    double maximum = std::numeric_limits<double>::lowest();
+    for (int y = 0; y < frame.height; y += step) {
+        for (int x = 0; x < frame.width; x += step) {
+            const double value = sampleValue(frame, x, y, component);
+            samples.push_back(value);
+            minimum = std::min(minimum, value);
+            maximum = std::max(maximum, value);
+        }
+    }
+
+    if (samples.isEmpty()) {
+        return analysis;
+    }
+
+    analysis.minimumValue = minimum;
+    analysis.maximumValue = maximum;
+    analysis.sortedSamples = samples;
+    std::sort(analysis.sortedSamples.begin(), analysis.sortedSamples.end());
+
+    analysis.histogramBins.fill(0, histogramBinCount);
+    if (histogramBinCount == 1 || qFuzzyCompare(minimum + 1.0, maximum + 1.0)) {
+        analysis.histogramBins[0] = static_cast<quint64>(samples.size());
+        return analysis;
+    }
+
+    const double denominator = maximum - minimum;
+    for (double value : samples) {
+        const double normalized = std::clamp((value - minimum) / denominator, 0.0, 1.0);
+        const int binIndex = std::clamp(static_cast<int>(normalized * (histogramBinCount - 1)), 0, histogramBinCount - 1);
+        ++analysis.histogramBins[binIndex];
+    }
+
+    return analysis;
+}
+
+bool FrameRenderer::applyAutoContrastToChannel(const ChannelAutoContrastAnalysis &analysis, ChannelRenderSettings &settings)
+{
+    if (!analysis.isValid()) {
+        return false;
+    }
+
+    sanitizePercentileRange(settings);
+
+    const double minimum = percentileToValue(analysis, settings.lowPercentile);
+    const double maximum = percentileToValue(analysis, settings.highPercentile);
+    const double adjustedHigh = adjustedHighValue(minimum, maximum);
+    if (!qFuzzyCompare(settings.low + 1.0, minimum + 1.0) || !qFuzzyCompare(settings.high + 1.0, adjustedHigh + 1.0)) {
+        settings.low = minimum;
+        settings.high = adjustedHigh;
+        return true;
+    }
+
+    return false;
 }
 
 bool FrameRenderer::applyAutoContrast(const RawFrame &frame, QVector<ChannelRenderSettings> &settings)
@@ -100,46 +229,93 @@ bool FrameRenderer::applyAutoContrast(const RawFrame &frame, QVector<ChannelRend
         return false;
     }
 
-    std::vector<double> minimums(static_cast<size_t>(effectiveChannels), std::numeric_limits<double>::max());
-    std::vector<double> maximums(static_cast<size_t>(effectiveChannels), std::numeric_limits<double>::lowest());
-
-    const int step = qMax(1, static_cast<int>(std::sqrt((frame.width * frame.height) / 200000.0)));
-    for (int y = 0; y < frame.height; y += step) {
-        for (int x = 0; x < frame.width; x += step) {
-            if (frame.components == 1) {
-                const double value = sampleValue(frame, x, y, 0);
-                for (int channelIndex = 0; channelIndex < effectiveChannels; ++channelIndex) {
-                    minimums[static_cast<size_t>(channelIndex)] = std::min(minimums[static_cast<size_t>(channelIndex)], value);
-                    maximums[static_cast<size_t>(channelIndex)] = std::max(maximums[static_cast<size_t>(channelIndex)], value);
-                }
-            } else {
-                for (int channelIndex = 0; channelIndex < effectiveChannels; ++channelIndex) {
-                    const double value = sampleValue(frame, x, y, channelIndex);
-                    minimums[static_cast<size_t>(channelIndex)] = std::min(minimums[static_cast<size_t>(channelIndex)], value);
-                    maximums[static_cast<size_t>(channelIndex)] = std::max(maximums[static_cast<size_t>(channelIndex)], value);
-                }
-            }
-        }
-    }
-
     bool changed = false;
+    std::optional<ChannelAutoContrastAnalysis> sharedSingleChannelAnalysis;
     for (int channelIndex = 0; channelIndex < effectiveChannels; ++channelIndex) {
         auto &setting = settings[channelIndex];
         if (!setting.autoContrast) {
             continue;
         }
 
-        const double minimum = minimums[static_cast<size_t>(channelIndex)];
-        const double maximum = maximums[static_cast<size_t>(channelIndex)];
-        const double adjustedHigh = qFuzzyCompare(minimum + 1.0, maximum + 1.0) ? minimum + 1.0 : maximum;
-        if (!qFuzzyCompare(setting.low + 1.0, minimum + 1.0) || !qFuzzyCompare(setting.high + 1.0, adjustedHigh + 1.0)) {
-            setting.low = minimum;
-            setting.high = adjustedHigh;
-            changed = true;
+        if (frame.components == 1) {
+            if (!sharedSingleChannelAnalysis.has_value()) {
+                sharedSingleChannelAnalysis = analyzeChannel(frame, channelIndex);
+            }
+            changed = applyAutoContrastToChannel(*sharedSingleChannelAnalysis, setting) || changed;
+            continue;
         }
+
+        changed = applyAutoContrastToChannel(analyzeChannel(frame, channelIndex), setting) || changed;
     }
 
     return changed;
+}
+
+double FrameRenderer::percentileToValue(const ChannelAutoContrastAnalysis &analysis, double percentile)
+{
+    if (!analysis.isValid()) {
+        return 0.0;
+    }
+
+    const double clampedPercentile = std::clamp(percentile, 0.0, 100.0);
+    if (analysis.sortedSamples.size() == 1) {
+        return analysis.sortedSamples.front();
+    }
+
+    const double position = (clampedPercentile / 100.0) * (analysis.sortedSamples.size() - 1);
+    const int maxIndex = static_cast<int>(analysis.sortedSamples.size()) - 1;
+    const int lowerIndex = std::clamp(static_cast<int>(std::floor(position)), 0, maxIndex);
+    const int upperIndex = std::clamp(static_cast<int>(std::ceil(position)), 0, maxIndex);
+    if (lowerIndex == upperIndex) {
+        return analysis.sortedSamples.at(lowerIndex);
+    }
+
+    const double fraction = position - lowerIndex;
+    const double lowerValue = analysis.sortedSamples.at(lowerIndex);
+    const double upperValue = analysis.sortedSamples.at(upperIndex);
+    return lowerValue + ((upperValue - lowerValue) * fraction);
+}
+
+double FrameRenderer::valueToPercentile(const ChannelAutoContrastAnalysis &analysis, double value)
+{
+    if (!analysis.isValid()) {
+        return 0.0;
+    }
+
+    if (analysis.sortedSamples.size() == 1) {
+        return 0.0;
+    }
+
+    const auto begin = analysis.sortedSamples.cbegin();
+    const auto end = analysis.sortedSamples.cend();
+    const auto lowerIt = std::lower_bound(begin, end, value);
+    const auto upperIt = std::upper_bound(begin, end, value);
+
+    if (lowerIt != upperIt) {
+        const double lowerIndex = std::distance(begin, lowerIt);
+        const double upperIndex = std::distance(begin, upperIt) - 1.0;
+        const double rank = (lowerIndex + upperIndex) / 2.0;
+        return std::clamp((rank / (analysis.sortedSamples.size() - 1)) * 100.0, 0.0, 100.0);
+    }
+
+    if (lowerIt == begin) {
+        return 0.0;
+    }
+    if (lowerIt == end) {
+        return 100.0;
+    }
+
+    const int upperIndex = static_cast<int>(std::distance(begin, lowerIt));
+    const int lowerIndex = upperIndex - 1;
+    const double lowerValue = analysis.sortedSamples.at(lowerIndex);
+    const double upperValue = analysis.sortedSamples.at(upperIndex);
+    if (qFuzzyCompare(lowerValue + 1.0, upperValue + 1.0)) {
+        return std::clamp((static_cast<double>(upperIndex) / (analysis.sortedSamples.size() - 1)) * 100.0, 0.0, 100.0);
+    }
+
+    const double fraction = std::clamp((value - lowerValue) / (upperValue - lowerValue), 0.0, 1.0);
+    const double rank = lowerIndex + fraction;
+    return std::clamp((rank / (analysis.sortedSamples.size() - 1)) * 100.0, 0.0, 100.0);
 }
 
 RenderedFrame FrameRenderer::render(const RawFrame &frame,

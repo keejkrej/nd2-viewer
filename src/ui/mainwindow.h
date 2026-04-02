@@ -111,7 +111,7 @@ private:
                                         const QRect &cropRect = QRect()) const;
     [[nodiscard]] QString buildDefaultFrameSavePath(ExportScope scope,
                                                     const QString &extension = QStringLiteral(".png")) const;
-    [[nodiscard]] QString buildDefaultMovieSavePath(ExportScope scope) const;
+    [[nodiscard]] QString buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const;
     [[nodiscard]] int findTimeLoopIndex() const;
     void setMovieExportUiState(bool active);
     void startMovieExportPlayback(const MovieExportSettings &settings);
@@ -120,6 +120,7 @@ private:
     void trySendMovieExportFrame();
     void finishMovieExportPlayback(const QString &errorMessage = QString());
     void cleanupMovieExportPlayback();
+    void openAutoContrastTuningDialog(int channelIndex);
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();

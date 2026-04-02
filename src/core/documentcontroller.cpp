@@ -154,18 +154,51 @@ void DocumentController::autoContrastChannel(int channelIndex)
         return;
     }
 
-    channelSettings_[channelIndex].autoContrast = true;
+    if (!currentRawFrame_.isValid()) {
+        return;
+    }
+
+    const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(currentRawFrame_, channelIndex);
+    if (!FrameRenderer::applyAutoContrastToChannel(analysis, channelSettings_[channelIndex])) {
+        return;
+    }
+
     ++channelSettingsRevision_;
-    rerenderCurrentFrame(true);
+    emit channelSettingsChanged();
+    rerenderCurrentFrame(false);
 }
 
 void DocumentController::autoContrastAllChannels()
 {
-    for (ChannelRenderSettings &settings : channelSettings_) {
-        settings.autoContrast = true;
+    if (!currentRawFrame_.isValid()) {
+        return;
     }
+
+    bool changed = false;
+    ChannelAutoContrastAnalysis sharedSingleChannelAnalysis;
+    bool sharedSingleChannelAnalysisReady = false;
+    for (int channelIndex = 0; channelIndex < channelSettings_.size(); ++channelIndex) {
+        if (currentRawFrame_.components == 1) {
+            if (!sharedSingleChannelAnalysisReady) {
+                sharedSingleChannelAnalysis = FrameRenderer::analyzeChannel(currentRawFrame_, channelIndex);
+                sharedSingleChannelAnalysisReady = true;
+            }
+            changed = FrameRenderer::applyAutoContrastToChannel(sharedSingleChannelAnalysis, channelSettings_[channelIndex]) || changed;
+            continue;
+        }
+
+        changed = FrameRenderer::applyAutoContrastToChannel(FrameRenderer::analyzeChannel(currentRawFrame_, channelIndex),
+                                                            channelSettings_[channelIndex])
+                  || changed;
+    }
+
+    if (!changed) {
+        return;
+    }
+
     ++channelSettingsRevision_;
-    rerenderCurrentFrame(true);
+    emit channelSettingsChanged();
+    rerenderCurrentFrame(false);
 }
 
 void DocumentController::reloadCurrentFrame()

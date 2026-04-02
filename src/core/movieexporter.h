@@ -19,14 +19,14 @@ struct MovieExportSettings
     int timeLoopIndex = -1;
     int startFrame = 0;
     int endFrame = 0;
-    int skipFrames = 0;
+    int step = 1;
     double fps = 10.0;
     QRect roiRect;
     QSize outputSize;
 
     [[nodiscard]] int frameStep() const
     {
-        return skipFrames + 1;
+        return qMax(step, 1);
     }
 };
 

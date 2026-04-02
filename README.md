@@ -8,6 +8,8 @@ A Qt 6 desktop viewer for Nikon ND2 microscopy files using Nikon's official ND2 
 - Navigate experiment loops dynamically (time, z, XY, and other SDK-exposed loops)
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
+- Use percentile-based per-channel live auto contrast with a histogram tuning dialog
+- Export MP4 movies with explicit `start`, `end`, and `step` controls on the time axis
 - Inspect attributes, experiment metadata, frame metadata, and text info
 - Zoom, fit-to-window, pan, and inspect pixel values
 
@@ -35,11 +37,18 @@ On macOS, the easiest path is:
 ./scripts/build-macos.sh
 ```
 
+The macOS build script also supports explicit options:
+
+```bash
+./scripts/build-macos.sh --configuration Release --build-dir build-macos-release
+```
+
 That script defaults to:
 
 - `Qt6_DIR=/opt/homebrew/lib/cmake/Qt6`
 - `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
 - `build_dir=build-macos`
+- `configuration=Debug`
 
 If your SDK lives elsewhere, override `ND2SDK_ROOT` when invoking the script.
 
@@ -89,3 +98,6 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.
+- Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
+- The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
+- Movie export now opens a config dialog first, then prompts for the final save path. The suggested filename includes fixed non-time coordinates plus the chosen `start`, `end`, and `step` range.

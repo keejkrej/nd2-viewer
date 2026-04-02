@@ -40,7 +40,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output was `dist\nd2-viewer-0.1.0-win64.exe`.
+- A successful recent package output should now use the `0.1.1` version string, for example `dist\nd2-viewer-0.1.1-win64.exe`.
 - CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
 - `scripts/package-macos.sh` builds a release `.app` bundle and writes a DMG into `dist`.
 
@@ -58,6 +58,9 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - Navigator sliders are intentionally deferred now: moving a slider updates the paired spin box immediately, but frame loads commit only when the slider interaction ends.
 - Coordinate-driven frame loads now prepare metadata, auto-contrast, and rendered images off the UI thread before applying the result.
 - Spin boxes still commit immediately for precise stepping.
+- `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
+- The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
+- Movie export now uses `start`, `end`, and `step` terminology. The config dialog no longer asks for a path up front; after `Continue`, the save dialog suggests a filename that includes fixed non-time coordinates plus `movie_start..._end..._step...`.
 
 ## Validation Expectations
 
@@ -72,6 +75,15 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
   - drag/click interactions only update once per completed slider interaction
   - first frame navigation feels responsive
   - metadata still updates correctly
+- For percentile auto-contrast work, manually verify:
+  - high-intensity artifacts no longer dominate `Live auto` with the default percentile range
+  - the histogram dialog reflects the current frame and `Cancel` restores the original settings
+  - dragging histogram threshold lines updates the markers live but only commits the image preview on release
+- For movie export UI work, manually verify:
+  - `Start frame` defaults to `0`
+  - `Step` defaults to `1`
+  - the final save dialog appears only after the config dialog is accepted
+  - the suggested filename includes fixed non-time coordinates and the selected `start`, `end`, and `step`
 
 ## Editing Guidance
 

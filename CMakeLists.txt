@@ -42,7 +42,9 @@ endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia)
 
 set(_nd2viewer_target_type)
-if(APPLE)
+if(WIN32)
+  set(_nd2viewer_target_type WIN32)
+elseif(APPLE)
   set(_nd2viewer_target_type MACOSX_BUNDLE)
 endif()
 
@@ -66,6 +68,12 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/ui/mainwindow.cpp
   src/ui/mainwindow.h
 )
+
+if(WIN32)
+  target_sources(nd2-viewer PRIVATE
+    src/resources/app-icon.rc
+  )
+endif()
 
 if(APPLE)
   set_target_properties(nd2-viewer PROPERTIES
@@ -273,6 +281,8 @@ if(WIN32)
   set(CPACK_NSIS_DISPLAY_NAME "nd2-viewer")
   set(CPACK_NSIS_PACKAGE_NAME "nd2-viewer")
   set(CPACK_NSIS_INSTALLED_ICON_NAME "nd2-viewer.exe")
+  set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
+  set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
   set(CPACK_NSIS_MODIFY_PATH OFF)

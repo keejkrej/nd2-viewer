@@ -48,6 +48,7 @@ endif()
 
 add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/main.cpp
+  src/resources/resources.qrc
   src/core/documentcontroller.cpp
   src/core/documentcontroller.h
   src/core/framecache.h

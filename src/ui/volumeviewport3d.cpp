@@ -45,7 +45,11 @@ out vec3 vTexCoord;
 void main()
 {
     vec3 localCoord = vec3(aPosition, uSliceLerp);
-    vTexCoord = mix(uTexMin, uTexMax, localCoord);
+    // Image rows are stored top-down, but the 3D world uses +Y as up, so flip
+    // texture Y here to keep the smooth volume path aligned with the point cloud.
+    vec3 texCoord = mix(uTexMin, uTexMax, localCoord);
+    texCoord.y = uTexMin.y + uTexMax.y - texCoord.y;
+    vTexCoord = texCoord;
     vec3 objectPosition = mix(uBoundsMin, uBoundsMax, localCoord);
     gl_Position = uMvp * vec4(objectPosition, 1.0);
 }

@@ -108,4 +108,5 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - `Tools > 3D View` is enabled only for files with a usable z-loop and opens a separate 3D window seeded from the current 2D channel state.
 - The 3D window now supports `Balanced`, `Volume`, and `Detail` render modes plus an explicit `Fit To Volume` action for reframing the occupied part of the stack.
+- The `Balanced`, `Volume`, and `Detail` 3D render modes now share the same vertical orientation, so overlays line up instead of appearing vertically mirrored.
 - Movie export now opens a config dialog first, then prompts for the final save path. The suggested filename includes fixed non-time coordinates plus the chosen `start`, `end`, and `step` range.

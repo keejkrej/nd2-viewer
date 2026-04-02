@@ -2,6 +2,18 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.3] - 2026-04-02
+
+### Changed
+- Bumped the project version to `0.1.3`.
+
+### Fixed
+- Fixed the 3D smooth volume path sampling Y in the opposite direction from the point-cloud path, which made `Volume` and `Balanced` appear as upside-down copies of `Detail`.
+- Aligned the `Balanced`, `Volume`, and `Detail` render modes so they now overlay the same structures with a consistent vertical orientation.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` to describe the aligned 3D render-mode orientation and the current `0.1.3` packaging output.
+
 ## [0.1.2] - 2026-04-02
 
 ### Added

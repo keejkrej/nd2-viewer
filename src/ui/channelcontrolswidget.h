@@ -33,7 +33,7 @@ private:
     QCheckBox *enabledCheck_ = nullptr;
     QCheckBox *autoCheck_ = nullptr;
     QLabel *nameLabel_ = nullptr;
-    QLabel *colorSwatch_ = nullptr;
+    QPushButton *colorSwatchButton_ = nullptr;
     QDoubleSpinBox *lowSpinBox_ = nullptr;
     QDoubleSpinBox *highSpinBox_ = nullptr;
     QPushButton *autoButton_ = nullptr;

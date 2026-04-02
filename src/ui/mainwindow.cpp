@@ -2,6 +2,8 @@
 
 #include "ui/channelcontrolswidget.h"
 #include "ui/imageviewport.h"
+#include "ui/volumeviewerwindow.h"
+#include "core/volumeutils.h"
 
 #include <QAction>
 #include <QApplication>
@@ -804,6 +806,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
+    if (volumeViewerWindow_) {
+        volumeViewerWindow_->close();
+    }
+
     QMainWindow::closeEvent(event);
 }
 
@@ -844,6 +850,36 @@ void MainWindow::exportMovieAs()
 void MainWindow::exportRoiMovieAs()
 {
     exportMovieSelection(ExportScope::Roi);
+}
+
+void MainWindow::open3DView()
+{
+    if (!controller_.hasDocument() || !hasUsableZStack()) {
+        return;
+    }
+
+    if (volumeViewerWindow_) {
+        volumeViewerWindow_->show();
+        volumeViewerWindow_->raise();
+        volumeViewerWindow_->activateWindow();
+        return;
+    }
+
+    volumeViewerWindow_ = new VolumeViewerWindow(controller_.currentPath(),
+                                                 controller_.documentInfo(),
+                                                 controller_.coordinateState(),
+                                                 controller_.channelSettings());
+    connect(volumeViewerWindow_, &QObject::destroyed, this, [this]() {
+        volumeViewerWindow_ = nullptr;
+        setEnabled(true);
+        activateWindow();
+        raise();
+    });
+
+    volumeViewerWindow_->show();
+    volumeViewerWindow_->raise();
+    volumeViewerWindow_->activateWindow();
+    setEnabled(false);
 }
 
 void MainWindow::openAutoContrastTuningDialog(int channelIndex)
@@ -1071,6 +1107,9 @@ void MainWindow::updateDocumentUi()
     updateFrameMetadataUi();
     updateWindowTitle();
     updateInfoLabel();
+    if (threeDViewAction_) {
+        threeDViewAction_->setEnabled(hasUsableZStack());
+    }
 }
 
 void MainWindow::updateCoordinateUi()
@@ -1196,6 +1235,10 @@ void MainWindow::buildMenus()
         imageViewport_->setInteractionMode(checked ? ImageViewport::InteractionMode::DrawRoi
                                                    : ImageViewport::InteractionMode::Pan);
     });
+
+    threeDViewAction_ = toolsMenu->addAction(tr("3D View"));
+    threeDViewAction_->setEnabled(false);
+    connect(threeDViewAction_, &QAction::triggered, this, &MainWindow::open3DView);
 }
 
 void MainWindow::buildCentralUi()
@@ -1770,6 +1813,11 @@ int MainWindow::findTimeLoopIndex() const
     return -1;
 }
 
+bool MainWindow::hasUsableZStack() const
+{
+    return controller_.hasDocument() && VolumeUtils::findZLoopIndex(controller_.documentInfo()) >= 0;
+}
+
 void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
 {
     QMediaFormat format(QMediaFormat::MPEG4);
@@ -2035,6 +2083,9 @@ void MainWindow::setMovieExportUiState(bool active)
     }
     if (quitAction_) {
         quitAction_->setEnabled(!active);
+    }
+    if (threeDViewAction_) {
+        threeDViewAction_->setEnabled(!active && hasUsableZStack());
     }
 }
 

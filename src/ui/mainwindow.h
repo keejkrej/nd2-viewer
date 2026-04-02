@@ -21,6 +21,7 @@ class QTreeWidget;
 class QVideoFrameInput;
 class QVBoxLayout;
 class QCloseEvent;
+class VolumeViewerWindow;
 
 class MainWindow : public QMainWindow
 {
@@ -39,6 +40,7 @@ private slots:
     void saveCurrentRoiAs();
     void exportMovieAs();
     void exportRoiMovieAs();
+    void open3DView();
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -114,6 +116,7 @@ private:
                                                     const QString &extension = QStringLiteral(".png")) const;
     [[nodiscard]] QString buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const;
     [[nodiscard]] int findTimeLoopIndex() const;
+    [[nodiscard]] bool hasUsableZStack() const;
     void setMovieExportUiState(bool active);
     void startMovieExportPlayback(const MovieExportSettings &settings);
     void requestNextMovieExportFrame();
@@ -143,6 +146,7 @@ private:
     QAction *openAction_ = nullptr;
     QAction *reloadAction_ = nullptr;
     QAction *quitAction_ = nullptr;
+    QAction *threeDViewAction_ = nullptr;
     bool movieExportInProgress_ = false;
     MovieExportSettings movieExportSettings_;
     QVector<int> movieExportTimeValues_;
@@ -156,4 +160,5 @@ private:
     QMediaRecorder *movieRecorder_ = nullptr;
     QVideoFrameInput *movieVideoFrameInput_ = nullptr;
     QVideoFrame moviePendingFrame_;
+    VolumeViewerWindow *volumeViewerWindow_ = nullptr;
 };

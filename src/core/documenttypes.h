@@ -102,6 +102,50 @@ struct RawFrame
     }
 };
 
+struct RawVolume
+{
+    FrameCoordinateState fixedCoordinates;
+    int zLoopIndex = -1;
+    int width = 0;
+    int height = 0;
+    int depth = 0;
+    int bitsPerComponent = 0;
+    int components = 0;
+    QString pixelDataType = QStringLiteral("unsigned");
+    QVector3D voxelSpacing = {1.0f, 1.0f, 1.0f};
+    QVector<QByteArray> channelData;
+
+    [[nodiscard]] bool isValid() const
+    {
+        if (width <= 0 || height <= 0 || depth <= 0 || components <= 0 || bitsPerComponent <= 0 || channelData.size() < components) {
+            return false;
+        }
+
+        const qsizetype expectedBytes = voxelCount() * bytesPerComponent();
+        for (int index = 0; index < components; ++index) {
+            if (channelData.at(index).size() != expectedBytes) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] int bytesPerComponent() const
+    {
+        return (bitsPerComponent + 7) / 8;
+    }
+
+    [[nodiscard]] qsizetype voxelCount() const
+    {
+        return static_cast<qsizetype>(width) * height * depth;
+    }
+
+    [[nodiscard]] qsizetype planeBytes() const
+    {
+        return static_cast<qsizetype>(width) * height * bytesPerComponent();
+    }
+};
+
 struct RenderedFrame
 {
     int sequenceIndex = -1;
@@ -120,4 +164,5 @@ Q_DECLARE_METATYPE(DocumentInfo)
 Q_DECLARE_METATYPE(FrameCoordinateState)
 Q_DECLARE_METATYPE(MetadataSection)
 Q_DECLARE_METATYPE(RawFrame)
+Q_DECLARE_METATYPE(RawVolume)
 Q_DECLARE_METATYPE(RenderedFrame)

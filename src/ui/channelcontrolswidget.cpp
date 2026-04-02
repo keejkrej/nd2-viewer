@@ -1,6 +1,7 @@
 #include "ui/channelcontrolswidget.h"
 
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -63,10 +64,10 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     headerLayout->setSpacing(8);
     enabledCheck_ = new QCheckBox(this);
     enabledCheck_->setChecked(true);
-    colorSwatch_ = new QLabel(this);
-    colorSwatch_->setFixedSize(18, 18);
-    colorSwatch_->setFrameShape(QFrame::Box);
-    colorSwatch_->setFrameShadow(QFrame::Plain);
+    colorSwatchButton_ = new QPushButton(this);
+    colorSwatchButton_->setFixedSize(18, 18);
+    colorSwatchButton_->setFlat(true);
+    colorSwatchButton_->setToolTip(tr("Choose channel color"));
     nameLabel_ = new QLabel(tr("Channel"), this);
     nameLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     autoCheck_ = new QCheckBox(tr("Live auto"), this);
@@ -81,7 +82,7 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     autoButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     headerLayout->addWidget(enabledCheck_);
-    headerLayout->addWidget(colorSwatch_);
+    headerLayout->addWidget(colorSwatchButton_);
     headerLayout->addWidget(nameLabel_);
     headerLayout->addWidget(autoCheck_);
     headerLayout->addWidget(tuneButton_);
@@ -142,6 +143,18 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
 
     connect(autoButton_, &QPushButton::clicked, this, [this]() { emit autoContrastRequested(); });
     connect(tuneButton_, &QPushButton::clicked, this, [this]() { emit autoContrastTuningRequested(); });
+    connect(colorSwatchButton_, &QPushButton::clicked, this, [this]() {
+        const QColor selected = QColorDialog::getColor(settings_.color, this, tr("Choose Channel Color"));
+        if (!selected.isValid() || selected == settings_.color) {
+            return;
+        }
+
+        settings_.color = selected;
+        updateSwatch(selected);
+        if (!updating_) {
+            emitEditedSettings();
+        }
+    });
 }
 
 void ChannelRowWidget::setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings)
@@ -166,7 +179,7 @@ ChannelRenderSettings ChannelRowWidget::currentSettings() const
     settings.autoContrast = autoCheck_->isChecked();
     settings.low = lowSpinBox_->value();
     settings.high = std::max(highSpinBox_->value(), settings.low + 1.0e-9);
-    settings.color = colorSwatch_->palette().color(QPalette::Window);
+    settings.color = settings_.color;
     return settings;
 }
 
@@ -177,10 +190,7 @@ void ChannelRowWidget::emitEditedSettings()
 
 void ChannelRowWidget::updateSwatch(const QColor &color)
 {
-    QPalette palette = colorSwatch_->palette();
-    palette.setColor(QPalette::Window, color);
-    colorSwatch_->setAutoFillBackground(true);
-    colorSwatch_->setPalette(palette);
+    colorSwatchButton_->setStyleSheet(QStringLiteral("QPushButton { border: 1px solid palette(mid); background-color: %1; }").arg(color.name()));
 }
 
 ChannelControlsWidget::ChannelControlsWidget(QWidget *parent)

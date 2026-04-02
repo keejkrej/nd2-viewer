@@ -39,7 +39,7 @@ if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets)
 
 set(LIBCZI_DO_NOT_SET_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
 set(LIBCZI_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
@@ -76,12 +76,22 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/movieexporter.h
   src/core/nd2reader.cpp
   src/core/nd2reader.h
+  src/core/volumeloader.cpp
+  src/core/volumeloader.h
+  src/core/volumeutils.cpp
+  src/core/volumeutils.h
+  src/ui/autocontrasttuningdialog.cpp
+  src/ui/autocontrasttuningdialog.h
   src/ui/channelcontrolswidget.cpp
   src/ui/channelcontrolswidget.h
   src/ui/imageviewport.cpp
   src/ui/imageviewport.h
   src/ui/mainwindow.cpp
   src/ui/mainwindow.h
+  src/ui/volumeviewerwindow.cpp
+  src/ui/volumeviewerwindow.h
+  src/ui/volumeviewport3d.cpp
+  src/ui/volumeviewport3d.h
 )
 
 if(WIN32)
@@ -174,6 +184,8 @@ target_link_libraries(nd2-viewer
   PRIVATE
     Qt6::Concurrent
     Qt6::Multimedia
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
     Qt6::Widgets
     libCZI
     ND2ReadSdk::Reader

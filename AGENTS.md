@@ -1,0 +1,80 @@
+# AGENTS.md
+
+## Overview
+
+- `nd2-viewer` is a Qt 6 desktop viewer for Nikon ND2 microscopy files.
+- The primary workflow on this machine is Windows with Qt `6.11.0` and `msvc2022_64`.
+- The repo also supports macOS Apple Silicon builds via Homebrew Qt 6 and the Nikon macOS shared SDK.
+- On Windows, Nikon's shared ND2 SDK is expected at `C:\Program Files\nd2readsdk-shared`.
+
+## Preferred Build And Run Commands
+
+- Day-to-day debug build: `.\scripts\build-msvc.ps1`
+- Run the built app: `.\scripts\run-msvc.ps1`
+- Release packaging entrypoint: `.\scripts\package-msvc.ps1`
+- Portable package instead of installer: `.\scripts\package-msvc.ps1 -Generator ZIP`
+- macOS debug build: `./scripts/build-macos.sh`
+- macOS packaging entrypoint: `./scripts/package-macos.sh`
+
+## Important Toolchain Note
+
+- If you run `cmake` or `cl.exe` directly from a plain PowerShell session, the build can fail with missing standard library headers such as `type_traits`.
+- The helper scripts already enter the Visual Studio developer environment for you via `VsDevCmd.bat`.
+- If you build manually, do it from the VS developer environment or prefix commands with:
+
+```powershell
+$vs = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
+cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
+```
+
+## Output Directories
+
+- Debug build tree: `build-msvc`
+- Release build tree: `build-msvc-release`
+- macOS debug build tree: `build-macos`
+- macOS release build tree: `build-macos-release`
+- Built executable: `build-*\bin\nd2-viewer.exe`
+- Packaged artifacts: `dist`
+
+## Packaging Notes
+
+- `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
+- NSIS must be installed for the default installer flow to work.
+- A successful recent package output was `dist\nd2-viewer-0.1.0-win64.exe`.
+- CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
+- `scripts/package-macos.sh` builds a release `.app` bundle and writes a DMG into `dist`.
+
+## Repo Layout
+
+- `src/core`
+  - ND2 file reading, frame caching, rendering, and controller logic.
+- `src/ui`
+  - Main window, viewport, and channel controls.
+- `scripts`
+  - Windows PowerShell helpers and macOS shell helpers for build, run, and packaging.
+
+## Current Behavior Worth Knowing
+
+- Navigator sliders are intentionally deferred now: moving a slider updates the paired spin box immediately, but frame loads commit only when the slider interaction ends.
+- Coordinate-driven frame loads now prepare metadata, auto-contrast, and rendered images off the UI thread before applying the result.
+- Spin boxes still commit immediately for precise stepping.
+
+## Validation Expectations
+
+- There is no automated test suite in the repo right now.
+- Normal verification is:
+  - build Debug
+  - build Release
+  - run the app manually
+  - if relevant, run the package script
+- On this machine, the default validation path is still the MSVC scripts unless the task is specifically about macOS packaging.
+- For slider/navigation work, manually verify:
+  - drag/click interactions only update once per completed slider interaction
+  - first frame navigation feels responsive
+  - metadata still updates correctly
+
+## Editing Guidance
+
+- Do not edit `build-msvc`, `build-msvc-release`, or `dist` unless the task is specifically about generated outputs.
+- Prefer changing source under `src` and using the scripts to validate.
+- Keep changes compatible with the Windows/MSVC Qt flow already encoded in `CMakeLists.txt` and the PowerShell scripts.

@@ -2,6 +2,25 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.2] - 2026-04-02
+
+### Added
+- Added a separate `Tools > 3D View` window for ND2 and CZI files that expose a usable z-stack.
+- Added 3D channel controls with independent visibility, color, and percentile-based live auto contrast state.
+- Added `Fit To Volume`, `Reset View`, and `Balanced` / `Volume` / `Detail` render modes in the 3D viewer.
+
+### Changed
+- Changed 3D z-stack loading to assemble the full volume in the background from a fresh reader instance before rendering.
+- Changed the 3D renderer to fit the occupied part of the stack into view and blend smoother volume-style slices with the fitted point cloud fallback.
+- Bumped the project version to `0.1.2`.
+
+### Fixed
+- Fixed blank 3D renders caused by missing z calibration, overly conservative fit bounds, and fragile first-pass volume visibility defaults.
+- Fixed thin z-stacks collapsing into a tiny center dot by fitting the occupied voxel bounds instead of a clamped minimum extent.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` to describe the new 3D viewer workflow, render modes, validation checks, and the current `0.1.2` packaging output.
+
 ## [0.1.1] - 2026-04-02
 
 ### Added

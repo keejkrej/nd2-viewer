@@ -40,7 +40,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output should now use the `0.1.1` version string, for example `dist\nd2-viewer-0.1.1-win64.exe`.
+- A successful recent package output should now use the `0.1.2` version string, for example `dist\nd2-viewer-0.1.2-win64.exe`.
 - CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
 - `scripts/package-macos.sh` builds a release `.app` bundle and writes a DMG into `dist`.
 
@@ -60,6 +60,9 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - Spin boxes still commit immediately for precise stepping.
 - `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
 - The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
+- `Tools > 3D View` is now available for files with a usable z-loop and opens a separate 3D viewer window while the main window is disabled.
+- The 3D viewer loads the full z-stack in the background, keeps its own channel colors and contrast state, and supports `Balanced`, `Volume`, and `Detail` render modes.
+- `Reset View` restores the default camera angle and refits the stack, while `Fit To Volume` preserves the current angle and only reframes the occupied volume.
 - Movie export now uses `start`, `end`, and `step` terminology. The config dialog no longer asks for a path up front; after `Continue`, the save dialog suggests a filename that includes fixed non-time coordinates plus `movie_start..._end..._step...`.
 
 ## Validation Expectations
@@ -71,6 +74,11 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
   - run the app manually
   - if relevant, run the package script
 - On this machine, the default validation path is still the MSVC scripts unless the task is specifically about macOS packaging.
+- For 3D viewer work, manually verify:
+  - `Tools > 3D View` stays disabled for 2D-only files and enables for ND2/CZI z-stacks
+  - the 3D window disables the main window while open, then restores it on close
+  - `Fit To Volume`, `Reset View`, orbit, zoom, and render-mode switching behave predictably
+  - 3D channel toggles, colors, and auto-contrast adjustments do not change the main 2D view
 - For slider/navigation work, manually verify:
   - drag/click interactions only update once per completed slider interaction
   - first frame navigation feels responsive

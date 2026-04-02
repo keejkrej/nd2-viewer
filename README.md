@@ -10,6 +10,9 @@ A Qt 6 desktop viewer for Nikon ND2 and Zeiss CZI microscopy files.
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
 - Use percentile-based per-channel live auto contrast with a histogram tuning dialog
+- Open a separate `Tools > 3D View` window for z-stacks from ND2 and CZI files
+- Explore z-stacks in 3D with orbit, zoom, `Fit To Volume`, `Reset View`, and render-mode switching
+- Keep 3D channel visibility, colors, and live auto contrast independent from the main 2D view
 - Export MP4 movies with explicit `start`, `end`, and `step` controls on the time axis
 - Inspect attributes, experiment metadata, frame metadata, and text info
 - Zoom, fit-to-window, pan, and inspect pixel values
@@ -91,6 +94,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 
 - `CMakeLists.txt` copies the ND2 SDK runtime DLLs and the vendored `libCZI` runtime after build.
 - If `windeployqt` is available from the selected Qt kit, it is run automatically after build.
+- The 3D viewer uses Qt OpenGL and ships as part of the normal desktop app, there is no Napari runtime dependency.
 - CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.
 - `scripts/build-msvc.ps1` is the intended day-to-day build entrypoint on this machine.
@@ -102,4 +106,6 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 - The first CZI milestone supports standard plane-based files and rejects tiled, mosaic, pyramid, or otherwise irregular CZI layouts with a clear open-time error.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
+- `Tools > 3D View` is enabled only for files with a usable z-loop and opens a separate 3D window seeded from the current 2D channel state.
+- The 3D window now supports `Balanced`, `Volume`, and `Detail` render modes plus an explicit `Fit To Volume` action for reframing the occupied part of the stack.
 - Movie export now opens a config dialog first, then prompts for the final save path. The suggested filename includes fixed non-time coordinates plus the chosen `start`, `end`, and `step` range.

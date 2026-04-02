@@ -69,10 +69,10 @@ void appMessageHandler(QtMsgType type, const QMessageLogContext &context, const 
 void setupLogging()
 {
     const QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    QDir().mkpath(baseDir + QStringLiteral("/logs"));
+    [[maybe_unused]] const bool logDirReady = QDir().mkpath(baseDir + QStringLiteral("/logs"));
     const QString logPath = baseDir + QStringLiteral("/logs/nd2-viewer.log");
     gLogFile = new QFile(logPath);
-    gLogFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    [[maybe_unused]] const bool logFileOpened = gLogFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     qInstallMessageHandler(appMessageHandler);
     qInfo("Logging initialized: %s", qPrintable(logPath));
 }

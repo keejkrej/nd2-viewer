@@ -10,6 +10,9 @@ int main(int argc, char *argv[])
 
     qRegisterMetaType<ChannelRenderSettings>();
     qRegisterMetaType<FrameCoordinateState>();
+    qRegisterMetaType<MovieExportEstimate>();
+    qRegisterMetaType<MovieExportResult>();
+    qRegisterMetaType<MovieExportSettings>();
     qRegisterMetaType<Nd2DocumentInfo>();
     qRegisterMetaType<RawFrame>();
     qRegisterMetaType<RenderedFrame>();

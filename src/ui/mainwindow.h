@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/movieexporter.h"
 #include "core/documentcontroller.h"
 
 #include <QMainWindow>
@@ -10,12 +11,16 @@ class ChannelControlsWidget;
 class QEvent;
 class ImageViewport;
 class QLabel;
+class QMediaCaptureSession;
+class QMediaRecorder;
 class QPlainTextEdit;
 class QSlider;
 class QSpinBox;
 class QTabWidget;
 class QTreeWidget;
+class QVideoFrameInput;
 class QVBoxLayout;
+class QCloseEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -26,11 +31,14 @@ public:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void openFile();
     void saveCurrentFrameAs();
     void saveCurrentRoiAs();
+    void exportMovieAs();
+    void exportRoiMovieAs();
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -84,6 +92,7 @@ private:
     void buildMenus();
     void buildCentralUi();
     void exportCurrentSelection(ExportScope scope);
+    void exportMovieSelection(ExportScope scope);
     void rebuildNavigatorControls();
     void commitLoopSliderValue(int loopIndex);
     MetadataWidgets addMetadataTab(const QString &title);
@@ -102,6 +111,15 @@ private:
                                         const QRect &cropRect = QRect()) const;
     [[nodiscard]] QString buildDefaultFrameSavePath(ExportScope scope,
                                                     const QString &extension = QStringLiteral(".png")) const;
+    [[nodiscard]] QString buildDefaultMovieSavePath(ExportScope scope) const;
+    [[nodiscard]] int findTimeLoopIndex() const;
+    void setMovieExportUiState(bool active);
+    void startMovieExportPlayback(const MovieExportSettings &settings);
+    void requestNextMovieExportFrame();
+    void prepareCurrentMovieExportFrame();
+    void trySendMovieExportFrame();
+    void finishMovieExportPlayback(const QString &errorMessage = QString());
+    void cleanupMovieExportPlayback();
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();
@@ -122,4 +140,20 @@ private:
     QLabel *infoStatusLabel_ = nullptr;
     QLabel *zoomStatusLabel_ = nullptr;
     QLabel *pixelStatusLabel_ = nullptr;
+    QAction *openAction_ = nullptr;
+    QAction *reloadAction_ = nullptr;
+    QAction *quitAction_ = nullptr;
+    bool movieExportInProgress_ = false;
+    MovieExportSettings movieExportSettings_;
+    QVector<int> movieExportTimeValues_;
+    int movieExportNextFrameIndex_ = 0;
+    int movieExportEncodedFrameCount_ = 0;
+    bool movieExportAwaitingFrame_ = false;
+    bool movieExportPendingEndOfStream_ = false;
+    bool movieExportEndOfStreamSent_ = false;
+    bool movieVideoFrameInputReady_ = false;
+    QMediaCaptureSession *movieCaptureSession_ = nullptr;
+    QMediaRecorder *movieRecorder_ = nullptr;
+    QVideoFrameInput *movieVideoFrameInput_ = nullptr;
+    QVideoFrame moviePendingFrame_;
 };

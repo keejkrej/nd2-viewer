@@ -38,9 +38,11 @@ signals:
     void hoveredPixelChanged(const QPoint &pixelPosition, bool insideImage);
     void zoomChanged(double zoomFactor, bool fitToWindow);
     void saveImageRequested();
+    void exportMovieRequested();
     void roiChanged(const QRect &roiRect);
     void roiPresenceChanged(bool hasRoi);
     void exportRoiRequested();
+    void exportRoiMovieRequested();
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;

@@ -39,7 +39,7 @@ if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia)
 
 set(_nd2viewer_target_type)
 if(APPLE)
@@ -53,6 +53,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/framecache.h
   src/core/framerenderer.cpp
   src/core/framerenderer.h
+  src/core/movieexporter.cpp
+  src/core/movieexporter.h
   src/core/nd2reader.cpp
   src/core/nd2reader.h
   src/core/nd2types.h
@@ -147,6 +149,7 @@ endif()
 target_link_libraries(nd2-viewer
   PRIVATE
     Qt6::Concurrent
+    Qt6::Multimedia
     Qt6::Widgets
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff

@@ -60,7 +60,12 @@ bool Nd2Reader::open(const QString &path, QString *errorMessage)
     }
 
     info_ = buildFallbackInfo(path);
+#ifdef Q_OS_WIN
     handle_ = Lim_FileOpenForRead(reinterpret_cast<LIMCWSTR>(path.utf16()));
+#else
+    const QByteArray pathUtf8 = path.toUtf8();
+    handle_ = Lim_FileOpenForReadUtf8(pathUtf8.constData());
+#endif
     if (!handle_) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Failed to open file with the Nikon ND2 SDK.");

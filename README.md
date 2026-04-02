@@ -13,9 +13,12 @@ A Qt 6 desktop viewer for Nikon ND2 microscopy files using Nikon's official ND2 
 
 ## Build
 
-### Default toolchain
+### Default toolchains
 
-The project now targets `Qt 6 msvc2022_64` plus the Nikon Windows SDK by default.
+The project supports:
+
+- Windows: `Qt 6 msvc2022_64` plus the Nikon Windows SDK
+- macOS Apple Silicon: Homebrew `Qt 6` plus the Nikon macOS shared SDK
 
 The easiest path is:
 
@@ -25,6 +28,28 @@ The easiest path is:
 ```
 
 The helper script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
+
+On macOS, the easiest path is:
+
+```bash
+./scripts/build-macos.sh
+```
+
+That script defaults to:
+
+- `Qt6_DIR=/opt/homebrew/lib/cmake/Qt6`
+- `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
+- `build_dir=build-macos`
+
+If your SDK lives elsewhere, override `ND2SDK_ROOT` when invoking the script.
+
+To produce a macOS archive package, run:
+
+```bash
+./scripts/package-macos.sh
+```
+
+That script builds a release tree in `build-macos-release`, deploys a real `nd2-viewer.app` bundle, and writes a DMG into `dist` by default.
 
 ### Build a Windows installer
 
@@ -59,6 +84,8 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 - CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.
 - `scripts/build-msvc.ps1` is the intended day-to-day build entrypoint on this machine.
+- `scripts/build-macos.sh` is the intended macOS build entrypoint.
+- `scripts/package-macos.sh` is the macOS packaging entrypoint.
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
-- On Windows, the project now supports only the MSVC Qt toolchain.
+- On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.

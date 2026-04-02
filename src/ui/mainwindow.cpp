@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
@@ -857,7 +858,12 @@ bool MainWindow::writeChannelTiff(const QString &path,
         return false;
     }
 
+#ifdef Q_OS_WIN
     TIFF *tiff = TIFFOpenW(reinterpret_cast<const wchar_t *>(path.utf16()), "w");
+#else
+    const QByteArray encodedPath = QFile::encodeName(path);
+    TIFF *tiff = TIFFOpen(encodedPath.constData(), "w");
+#endif
     if (!tiff) {
         if (errorMessage) {
             *errorMessage = tr("Could not open %1 for writing.").arg(QDir::toNativeSeparators(path));

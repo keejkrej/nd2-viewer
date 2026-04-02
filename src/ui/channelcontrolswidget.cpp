@@ -13,9 +13,9 @@
 
 namespace
 {
-Nd2ChannelInfo fallbackChannelInfo(int index, const QString &name)
+ChannelInfo fallbackChannelInfo(int index, const QString &name)
 {
-    Nd2ChannelInfo channel;
+    ChannelInfo channel;
     channel.index = index;
     channel.name = name;
     return channel;
@@ -144,7 +144,7 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     connect(tuneButton_, &QPushButton::clicked, this, [this]() { emit autoContrastTuningRequested(); });
 }
 
-void ChannelRowWidget::setChannel(const Nd2ChannelInfo &channel, const ChannelRenderSettings &settings)
+void ChannelRowWidget::setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings)
 {
     updating_ = true;
     settings_ = settings;
@@ -204,7 +204,7 @@ ChannelControlsWidget::ChannelControlsWidget(QWidget *parent)
     connect(autoAllButton_, &QPushButton::clicked, this, &ChannelControlsWidget::autoContrastAllRequested);
 }
 
-void ChannelControlsWidget::setChannels(const QVector<Nd2ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings)
+void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings)
 {
     clearRows();
     channels_ = channels;
@@ -217,8 +217,8 @@ void ChannelControlsWidget::setChannels(const QVector<Nd2ChannelInfo> &channels,
     emptyStateLabel_->hide();
     for (int index = 0; index < settings.size(); ++index) {
         auto *row = new ChannelRowWidget(this);
-        const Nd2ChannelInfo channel = index < channels.size() ? channels.at(index)
-                                                               : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
+        const ChannelInfo channel = index < channels.size() ? channels.at(index)
+                                                            : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
         row->setChannel(channel, settings.at(index));
         rowsLayout_->insertWidget(rowsLayout_->count() - 1, row);
         rows_.push_back(row);
@@ -243,8 +243,8 @@ void ChannelControlsWidget::updateSettings(const QVector<ChannelRenderSettings> 
     }
 
     for (int index = 0; index < rows_.size(); ++index) {
-        const Nd2ChannelInfo channel = index < channels_.size() ? channels_.at(index)
-                                                                : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
+        const ChannelInfo channel = index < channels_.size() ? channels_.at(index)
+                                                             : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
         rows_.at(index)->setChannel(channel, settings.at(index));
     }
 }

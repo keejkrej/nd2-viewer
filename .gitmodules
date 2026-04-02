@@ -1,0 +1,3 @@
+[submodule "third_party/libczi"]
+	path = third_party/libczi
+	url = https://github.com/ZEISS/libczi.git

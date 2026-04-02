@@ -113,7 +113,7 @@ double normalize(double value, const ChannelRenderSettings &settings)
 }
 } // namespace
 
-QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const Nd2DocumentInfo &info)
+QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const DocumentInfo &info)
 {
     const int count = qMax(info.channels.size(), qMax(info.componentCount, 1));
     QVector<ChannelRenderSettings> settings;

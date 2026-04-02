@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/nd2types.h"
+#include "core/documenttypes.h"
 
 #include <QPoint>
 #include <QString>
@@ -22,7 +22,7 @@ struct ChannelAutoContrastAnalysis
 class FrameRenderer
 {
 public:
-    static QVector<ChannelRenderSettings> defaultChannelSettings(const Nd2DocumentInfo &info);
+    static QVector<ChannelRenderSettings> defaultChannelSettings(const DocumentInfo &info);
     static ChannelAutoContrastAnalysis analyzeChannel(const RawFrame &frame, int channelIndex, int histogramBinCount = 256);
     static bool applyAutoContrastToChannel(const ChannelAutoContrastAnalysis &analysis, ChannelRenderSettings &settings);
     static bool applyAutoContrast(const RawFrame &frame, QVector<ChannelRenderSettings> &settings);

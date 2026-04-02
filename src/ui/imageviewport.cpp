@@ -180,7 +180,7 @@ void ImageViewport::paintEvent(QPaintEvent *event)
 
     if (image_.isNull()) {
         painter.setPen(QColor(175, 175, 185));
-        painter.drawText(rect(), Qt::AlignCenter, tr("Open an ND2 file to start viewing."));
+        painter.drawText(rect(), Qt::AlignCenter, tr("Open an ND2 or CZI file to start viewing."));
         return;
     }
 

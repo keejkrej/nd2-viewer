@@ -19,19 +19,25 @@ bool DocumentController::openFile(const QString &path)
     closeFile();
 
     QString errorMessage;
-    if (!reader_.open(path, &errorMessage)) {
+    reader_ = createDocumentReaderForPath(path, &errorMessage);
+    if (!reader_) {
         emit errorOccurred(errorMessage);
         return false;
     }
 
-    coordinateState_.values.fill(0, reader_.documentInfo().loops.size());
-    channelSettings_ = FrameRenderer::defaultChannelSettings(reader_.documentInfo());
+    if (!reader_->open(path, &errorMessage)) {
+        emit errorOccurred(errorMessage);
+        reader_.reset();
+        return false;
+    }
+
+    coordinateState_.values.fill(0, reader_->documentInfo().loops.size());
+    channelSettings_ = FrameRenderer::defaultChannelSettings(reader_->documentInfo());
     currentSequenceIndex_ = -1;
     queuedSequenceIndex_ = -1;
     renderedFrame_ = {};
     currentRawFrame_ = {};
-    currentFrameMetadata_ = {};
-    currentFrameMetadataText_.clear();
+    currentFrameMetadataSection_ = {};
     frameCache_.clear();
     channelSettingsRevision_ = 0;
 
@@ -51,14 +57,16 @@ void DocumentController::closeFile()
         frameWatcher_.waitForFinished();
     }
 
-    reader_.close();
+    if (reader_) {
+        reader_->close();
+        reader_.reset();
+    }
     frameCache_.clear();
     coordinateState_ = {};
     channelSettings_.clear();
     currentRawFrame_ = {};
     renderedFrame_ = {};
-    currentFrameMetadata_ = {};
-    currentFrameMetadataText_.clear();
+    currentFrameMetadataSection_ = {};
     currentSequenceIndex_ = -1;
     queuedSequenceIndex_ = -1;
     channelSettingsRevision_ = 0;
@@ -67,17 +75,17 @@ void DocumentController::closeFile()
 
 bool DocumentController::hasDocument() const
 {
-    return reader_.isOpen();
+    return reader_ && reader_->isOpen();
 }
 
 QString DocumentController::currentPath() const
 {
-    return reader_.filePath();
+    return reader_ ? reader_->filePath() : QString();
 }
 
-const Nd2DocumentInfo &DocumentController::documentInfo() const
+const DocumentInfo &DocumentController::documentInfo() const
 {
-    return reader_.documentInfo();
+    return reader_ ? reader_->documentInfo() : emptyDocumentInfo();
 }
 
 const FrameCoordinateState &DocumentController::coordinateState() const
@@ -100,14 +108,9 @@ const RawFrame &DocumentController::currentRawFrame() const
     return currentRawFrame_;
 }
 
-QString DocumentController::currentFrameMetadataText() const
+const MetadataSection &DocumentController::currentFrameMetadataSection() const
 {
-    return currentFrameMetadataText_;
-}
-
-QJsonDocument DocumentController::currentFrameMetadata() const
-{
-    return currentFrameMetadata_;
+    return currentFrameMetadataSection_;
 }
 
 QString DocumentController::pixelInfoAt(const QPoint &pixelPosition) const
@@ -121,7 +124,7 @@ void DocumentController::setCoordinateValue(int loopIndex, int value)
         return;
     }
 
-    const Nd2DocumentInfo &info = reader_.documentInfo();
+    const DocumentInfo &info = reader_->documentInfo();
     if (loopIndex >= info.loops.size()) {
         return;
     }
@@ -249,7 +252,7 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
         RawFrame frame;
         if (!frameCache_.tryGet(sequenceIndex, &frame)) {
             QString frameError;
-            frame = reader_.readFrame(sequenceIndex, &frameError);
+            frame = reader_->readFrame(sequenceIndex, &frameError);
             if (!frame.isValid()) {
                 result.error = frameError;
                 return result;
@@ -258,8 +261,7 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
         }
 
         QString metadataError;
-        result.metadataText = reader_.frameMetadataText(sequenceIndex, &metadataError);
-        result.metadata = QJsonDocument::fromJson(result.metadataText.toUtf8());
+        result.metadataSection = reader_->frameMetadataSection(sequenceIndex, &metadataError);
         result.frame = frame;
         result.channelSettings = channelSettings;
         result.channelSettingsChanged = FrameRenderer::applyAutoContrast(result.frame, result.channelSettings);
@@ -291,8 +293,7 @@ void DocumentController::handleFrameLoadFinished()
 
     currentSequenceIndex_ = result.sequenceIndex;
     currentRawFrame_ = result.frame;
-    currentFrameMetadata_ = result.metadata;
-    currentFrameMetadataText_ = result.metadataText;
+    currentFrameMetadataSection_ = result.metadataSection;
 
     if (result.settingsRevision == channelSettingsRevision_) {
         channelSettings_ = result.channelSettings;
@@ -305,7 +306,7 @@ void DocumentController::handleFrameLoadFinished()
         rerenderCurrentFrame(true);
     }
     emit metadataChanged();
-    emit statusTextChanged(QStringLiteral("Frame %1 / %2").arg(currentSequenceIndex_ + 1).arg(reader_.sequenceCount()));
+    emit statusTextChanged(QStringLiteral("Frame %1 / %2").arg(currentSequenceIndex_ + 1).arg(reader_->sequenceCount()));
 
     finishQueuedFrameIfNeeded();
 }
@@ -325,9 +326,9 @@ void DocumentController::finishQueuedFrameIfNeeded()
 
 int DocumentController::resolveSequenceIndexForCurrentState(QString *errorMessage) const
 {
-    if (!reader_.isOpen()) {
+    if (!reader_ || !reader_->isOpen()) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("Open an ND2 file first.");
+            *errorMessage = QStringLiteral("Open an ND2 or CZI file first.");
         }
         return -1;
     }
@@ -337,7 +338,7 @@ int DocumentController::resolveSequenceIndexForCurrentState(QString *errorMessag
     }
 
     int sequenceIndex = -1;
-    if (!reader_.sequenceForCoords(coordinateState_.values, &sequenceIndex, errorMessage)) {
+    if (!reader_->sequenceForCoords(coordinateState_.values, &sequenceIndex, errorMessage)) {
         return -1;
     }
 
@@ -356,4 +357,10 @@ void DocumentController::rerenderCurrentFrame(bool updateAutoContrast)
 
     renderedFrame_ = FrameRenderer::render(currentRawFrame_, coordinateState_, channelSettings_);
     emit frameReady();
+}
+
+const DocumentInfo &DocumentController::emptyDocumentInfo()
+{
+    static const DocumentInfo info;
+    return info;
 }

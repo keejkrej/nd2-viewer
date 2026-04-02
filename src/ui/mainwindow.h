@@ -95,11 +95,12 @@ private:
     void exportMovieSelection(ExportScope scope);
     void rebuildNavigatorControls();
     void commitLoopSliderValue(int loopIndex);
+    void rebuildMetadataTabs();
     MetadataWidgets addMetadataTab(const QString &title);
     void setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText);
     void updateStaticMetadataUi();
     void updateFrameMetadataUi();
-    void setOverviewContent(const Nd2DocumentInfo &info);
+    void setOverviewContent(const DocumentInfo &info);
     [[nodiscard]] ExportMode promptForExportMode(ExportScope scope) const;
     [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath,
                                                        ExportMode mode,
@@ -134,10 +135,8 @@ private:
     ChannelControlsWidget *channelControlsWidget_ = nullptr;
     QTreeWidget *metadataOverviewTree_ = nullptr;
     QTabWidget *metadataTabs_ = nullptr;
-    MetadataWidgets attributesWidgets_;
-    MetadataWidgets experimentWidgets_;
-    MetadataWidgets metadataWidgets_;
-    MetadataWidgets textInfoWidgets_;
+    QVector<MetadataWidgets> metadataSectionWidgets_;
+    MetadataWidgets frameMetadataWidgets_;
     QLabel *infoStatusLabel_ = nullptr;
     QLabel *zoomStatusLabel_ = nullptr;
     QLabel *pixelStatusLabel_ = nullptr;

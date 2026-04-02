@@ -15,9 +15,10 @@ int main(int argc, char *argv[])
     qRegisterMetaType<MovieExportEstimate>();
     qRegisterMetaType<MovieExportResult>();
     qRegisterMetaType<MovieExportSettings>();
-    qRegisterMetaType<Nd2DocumentInfo>();
+    qRegisterMetaType<DocumentInfo>();
     qRegisterMetaType<RawFrame>();
     qRegisterMetaType<RenderedFrame>();
+    qRegisterMetaType<MetadataSection>();
 
     MainWindow window;
     window.show();

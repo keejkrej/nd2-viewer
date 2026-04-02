@@ -1,10 +1,11 @@
 # nd2-viewer
 
-A Qt 6 desktop viewer for Nikon ND2 microscopy files using Nikon's official ND2 SDK.
+A Qt 6 desktop viewer for Nikon ND2 and Zeiss CZI microscopy files.
 
 ## Features
 
-- Open `.nd2` files with the Nikon SDK
+- Open `.nd2` files with Nikon's official SDK
+- Open supported `.czi` files with vendored `libCZI`
 - Navigate experiment loops dynamically (time, z, XY, and other SDK-exposed loops)
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
@@ -88,7 +89,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 
 ## Notes
 
-- `CMakeLists.txt` copies the ND2 SDK runtime DLLs after build.
+- `CMakeLists.txt` copies the ND2 SDK runtime DLLs and the vendored `libCZI` runtime after build.
 - If `windeployqt` is available from the selected Qt kit, it is run automatically after build.
 - CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.
@@ -98,6 +99,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.
+- The first CZI milestone supports standard plane-based files and rejects tiled, mosaic, pyramid, or otherwise irregular CZI layouts with a clear open-time error.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - Movie export now opens a config dialog first, then prompts for the final save path. The suggested filename includes fixed non-time coordinates plus the chosen `start`, `end`, and `step` range.

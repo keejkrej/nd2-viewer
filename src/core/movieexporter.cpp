@@ -1,5 +1,6 @@
 #include "core/movieexporter.h"
 
+#include "core/documentreaderfactory.h"
 #include "core/framerenderer.h"
 
 #include <QBuffer>
@@ -29,13 +30,13 @@ QVector<int> buildTimeValues(const MovieExportSettings &settings)
     return values;
 }
 
-MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings, Nd2Reader *reader)
+MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings, DocumentReader *reader)
 {
     MovieExportResult result;
     result.outputPath = settings.outputPath;
 
-    if (settings.nd2Path.isEmpty()) {
-        result.errorMessage = QObject::tr("No ND2 file is available for movie export.");
+    if (settings.sourcePath.isEmpty()) {
+        result.errorMessage = QObject::tr("No ND2 or CZI file is available for movie export.");
         return result;
     }
 
@@ -54,21 +55,21 @@ MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings
         return result;
     }
 
-    if (!reader->open(settings.nd2Path, &result.errorMessage)) {
+    if (!reader->open(settings.sourcePath, &result.errorMessage)) {
         if (result.errorMessage.isEmpty()) {
-            result.errorMessage = QObject::tr("Failed to open the ND2 file for export.");
+            result.errorMessage = QObject::tr("Failed to open the source file for export.");
         }
         return result;
     }
 
-    const Nd2DocumentInfo &info = reader->documentInfo();
+    const DocumentInfo &info = reader->documentInfo();
     if (settings.timeLoopIndex >= info.loops.size()) {
         result.errorMessage = QObject::tr("The selected time loop is no longer available.");
         reader->close();
         return result;
     }
 
-    const Nd2LoopInfo &timeLoop = info.loops.at(settings.timeLoopIndex);
+    const LoopInfo &timeLoop = info.loops.at(settings.timeLoopIndex);
     if (timeLoop.size <= 0) {
         result.errorMessage = QObject::tr("The selected time loop is empty.");
         reader->close();
@@ -200,7 +201,16 @@ void MovieExportWorker::start()
 
 MovieExportResult MovieExportWorker::validateSettings() const
 {
-    return validateSettingsWithReader(settings_, &reader_);
+    QString errorMessage;
+    reader_ = createDocumentReaderForPath(settings_.sourcePath, &errorMessage);
+    if (!reader_) {
+        MovieExportResult result;
+        result.outputPath = settings_.outputPath;
+        result.errorMessage = errorMessage;
+        return result;
+    }
+
+    return validateSettingsWithReader(settings_, reader_.get());
 }
 
 QImage MovieExportWorker::renderFrameImage(int timeValue, QString *errorMessage)
@@ -209,14 +219,14 @@ QImage MovieExportWorker::renderFrameImage(int timeValue, QString *errorMessage)
     coordinates[settings_.timeLoopIndex] = timeValue;
 
     int sequenceIndex = -1;
-    if (!reader_.sequenceForCoords(coordinates, &sequenceIndex, errorMessage)) {
+    if (!reader_->sequenceForCoords(coordinates, &sequenceIndex, errorMessage)) {
         return {};
     }
 
-    RawFrame rawFrame = reader_.readFrame(sequenceIndex, errorMessage);
+    RawFrame rawFrame = reader_->readFrame(sequenceIndex, errorMessage);
     if (!rawFrame.isValid()) {
         if (errorMessage && errorMessage->isEmpty()) {
-            *errorMessage = tr("The ND2 SDK could not read frame %1.").arg(sequenceIndex + 1);
+            *errorMessage = tr("The file reader could not read frame %1.").arg(sequenceIndex + 1);
         }
         return {};
     }
@@ -314,7 +324,10 @@ void MovieExportWorker::finishWithError(const QString &message)
     completionEmitted_ = true;
     result_.success = false;
     result_.errorMessage = message;
-    reader_.close();
+    if (reader_) {
+        reader_->close();
+        reader_.reset();
+    }
     emit finished(result_);
 }
 
@@ -328,7 +341,10 @@ void MovieExportWorker::finishSuccessfully()
     result_.success = true;
     result_.errorMessage.clear();
     result_.bytesWritten = QFileInfo(result_.outputPath).exists() ? QFileInfo(result_.outputPath).size() : 0;
-    reader_.close();
+    if (reader_) {
+        reader_->close();
+        reader_.reset();
+    }
     emit finished(result_);
 }
 

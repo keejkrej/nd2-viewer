@@ -41,6 +41,16 @@ endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia)
 
+set(LIBCZI_DO_NOT_SET_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_CZICMD OFF CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_LIBCZIAPI OFF CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_CURL_BASED_STREAM OFF CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_AZURESDK_BASED_STREAM OFF CACHE BOOL "" FORCE)
+set(LIBCZI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(LIBCZI_BUILD_DYNLIB ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/libczi EXCLUDE_FROM_ALL)
+
 set(_nd2viewer_target_type)
 if(WIN32)
   set(_nd2viewer_target_type WIN32)
@@ -53,6 +63,12 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/resources/resources.qrc
   src/core/documentcontroller.cpp
   src/core/documentcontroller.h
+  src/core/documentreader.h
+  src/core/documentreaderfactory.cpp
+  src/core/documentreaderfactory.h
+  src/core/documenttypes.h
+  src/core/czireader.cpp
+  src/core/czireader.h
   src/core/framecache.h
   src/core/framerenderer.cpp
   src/core/framerenderer.h
@@ -60,7 +76,6 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/movieexporter.h
   src/core/nd2reader.cpp
   src/core/nd2reader.h
-  src/core/nd2types.h
   src/ui/channelcontrolswidget.cpp
   src/ui/channelcontrolswidget.h
   src/ui/imageviewport.cpp
@@ -160,6 +175,7 @@ target_link_libraries(nd2-viewer
     Qt6::Concurrent
     Qt6::Multimedia
     Qt6::Widgets
+    libCZI
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
 )
@@ -207,12 +223,37 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
 
 endif()
 
-if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
+if(TARGET libCZI)
+  if(WIN32)
+    add_custom_command(TARGET nd2-viewer POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:libCZI>"
+        "$<TARGET_FILE_DIR:nd2-viewer>"
+      COMMENT "Copying libCZI runtime"
+    )
+    install(FILES "$<TARGET_FILE:libCZI>"
+      DESTINATION "."
+      COMPONENT Runtime
+    )
+  elseif(APPLE)
+    add_custom_command(TARGET nd2-viewer POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:libCZI>"
+        "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
+      COMMENT "Copying libCZI runtime"
+    )
+  endif()
+endif()
+
+if(APPLE)
   set_target_properties(nd2-viewer PROPERTIES
     BUILD_RPATH "@executable_path/../Frameworks"
     INSTALL_RPATH "@executable_path/../Frameworks"
   )
+endif()
 
+if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
   file(GLOB ND2_SDK_DYLIBS
     "${ND2SDK_ROOT}/bin/*.dylib"
     "${ND2SDK_ROOT}/lib/*.dylib"
@@ -271,7 +312,7 @@ endif()
 
 set(CPACK_MONOLITHIC_INSTALL ON)
 set(CPACK_PACKAGE_VENDOR "nd2-viewer contributors")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Qt 6 desktop viewer for Nikon ND2 microscopy files")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Qt 6 desktop viewer for Nikon ND2 and Zeiss CZI microscopy files")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "nd2-viewer")
 set(CPACK_PACKAGE_EXECUTABLES "nd2-viewer" "nd2-viewer")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")

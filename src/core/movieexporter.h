@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/nd2reader.h"
-#include "core/nd2types.h"
+#include "core/documentreader.h"
+#include "core/documenttypes.h"
 
 #include <QObject>
 #include <QImage>
@@ -10,9 +10,11 @@
 #include <QVideoFrame>
 #include <QVector>
 
+#include <memory>
+
 struct MovieExportSettings
 {
-    QString nd2Path;
+    QString sourcePath;
     QString outputPath;
     QVector<int> fixedCoordinates;
     QVector<ChannelRenderSettings> channelSettings;
@@ -84,7 +86,7 @@ private:
     void handleReadyToSend();
 
     MovieExportSettings settings_;
-    mutable Nd2Reader reader_;
+    mutable std::unique_ptr<DocumentReader> reader_;
     QVector<ChannelRenderSettings> workingChannelSettings_;
     QVector<int> timeValues_;
     MovieExportResult result_;

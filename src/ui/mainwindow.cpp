@@ -59,25 +59,6 @@
 
 namespace
 {
-QString prettyJson(const QJsonDocument &document)
-{
-    if (document.isNull()) {
-        return QStringLiteral("null");
-    }
-    return QString::fromUtf8(document.toJson(QJsonDocument::Indented));
-}
-
-QJsonValue documentValue(const QJsonDocument &document)
-{
-    if (document.isArray()) {
-        return QJsonValue(document.array());
-    }
-    if (document.isObject()) {
-        return QJsonValue(document.object());
-    }
-    return QJsonValue(QJsonValue::Null);
-}
-
 QString scalarToDisplayString(const QJsonValue &value)
 {
     if (value.isString()) {
@@ -834,9 +815,9 @@ void MainWindow::openFile()
 
     const QString fileName = QFileDialog::getOpenFileName(
         this,
-        tr("Open ND2 File"),
+        tr("Open Microscopy File"),
         QString(),
-        tr("Nikon ND2 Files (*.nd2);;TIFF Files (*.tif *.tiff);;All Files (*.*)")
+        tr("Microscopy Files (*.nd2 *.czi);;Nikon ND2 Files (*.nd2);;Zeiss CZI Files (*.czi);;All Files (*.*)")
     );
     if (fileName.isEmpty()) {
         return;
@@ -886,7 +867,7 @@ void MainWindow::openAutoContrastTuningDialog(int channelIndex)
         return;
     }
 
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     const QString channelName = (channelIndex < info.channels.size() && !info.channels.at(channelIndex).name.isEmpty())
                                     ? info.channels.at(channelIndex).name
                                     : tr("Channel %1").arg(channelIndex + 1);
@@ -1024,7 +1005,7 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     }
 
     MovieExportSettings settings;
-    settings.nd2Path = controller_.currentPath();
+    settings.sourcePath = controller_.currentPath();
     settings.fixedCoordinates = controller_.coordinateState().values;
     settings.channelSettings = controller_.channelSettings();
     settings.timeLoopIndex = timeLoopIndex;
@@ -1038,7 +1019,7 @@ void MainWindow::exportMovieSelection(ExportScope scope)
                                    ? currentImage.copy(settings.roiRect)
                                    : currentImage;
 
-    const Nd2LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
+    const LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
     MovieExportDialog dialog(settings,
                              sampleImage,
                              timeLoop.size,
@@ -1125,21 +1106,20 @@ void MainWindow::updateMetadataUi()
 
 void MainWindow::updateStaticMetadataUi()
 {
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
 
     setOverviewContent(info);
-    setMetadataContent(attributesWidgets_, documentValue(info.attributesJson), prettyJson(info.attributesJson));
-    setMetadataContent(experimentWidgets_, documentValue(info.experimentJson), prettyJson(info.experimentJson));
-    setMetadataContent(textInfoWidgets_, documentValue(info.textInfoJson), prettyJson(info.textInfoJson));
+    rebuildMetadataTabs();
+    for (int index = 0; index < metadataSectionWidgets_.size() && index < info.metadataSections.size(); ++index) {
+        const MetadataSection &section = info.metadataSections.at(index);
+        setMetadataContent(metadataSectionWidgets_.at(index), section.treeValue, section.rawText);
+    }
 }
 
 void MainWindow::updateFrameMetadataUi()
 {
-    const Nd2DocumentInfo &info = controller_.documentInfo();
-    const QJsonDocument metadataDoc = controller_.currentFrameMetadata().isNull() ? info.metadataJson : controller_.currentFrameMetadata();
-    const QString metadataRaw = controller_.currentFrameMetadataText().isEmpty() ? prettyJson(info.metadataJson)
-                                                                                 : controller_.currentFrameMetadataText();
-    setMetadataContent(metadataWidgets_, documentValue(metadataDoc), metadataRaw);
+    const MetadataSection &metadataSection = controller_.currentFrameMetadataSection();
+    setMetadataContent(frameMetadataWidgets_, metadataSection.treeValue, metadataSection.rawText);
 }
 
 void MainWindow::showErrorMessage(const QString &message)
@@ -1154,7 +1134,7 @@ void MainWindow::showErrorMessage(const QString &message)
     }
 
     statusBar()->showMessage(message, 5000);
-    QMessageBox::warning(this, tr("ND2 Viewer"), message);
+    QMessageBox::warning(this, tr("nd2-viewer"), message);
 }
 
 void MainWindow::updateBusyState(bool busy)
@@ -1288,10 +1268,7 @@ void MainWindow::buildCentralUi()
     channelsLayout->addWidget(channelControlsWidget_);
 
     metadataTabs_ = new QTabWidget(sidebarPane);
-    attributesWidgets_ = addMetadataTab(tr("Attributes"));
-    experimentWidgets_ = addMetadataTab(tr("Experiment"));
-    metadataWidgets_ = addMetadataTab(tr("Metadata"));
-    textInfoWidgets_ = addMetadataTab(tr("Text Info"));
+    rebuildMetadataTabs();
 
     auto *metadataSection = new QWidget(sidebarPane);
     auto *metadataLayout = new QVBoxLayout(metadataSection);
@@ -1319,7 +1296,7 @@ void MainWindow::rebuildNavigatorControls()
     clearLayout(navigatorRowsLayout_);
     loopControls_.clear();
 
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     if (info.loops.isEmpty()) {
         navigatorEmptyLabel_ = new QLabel(tr("This file has a single frame and no experiment loops."), navigatorContainer_);
         navigatorEmptyLabel_->setWordWrap(true);
@@ -1329,7 +1306,7 @@ void MainWindow::rebuildNavigatorControls()
     }
 
     for (int index = 0; index < info.loops.size(); ++index) {
-        const Nd2LoopInfo &loop = info.loops.at(index);
+        const LoopInfo &loop = info.loops.at(index);
         LoopWidgets widgets;
         widgets.row = new QWidget(navigatorContainer_);
         auto *rowLayout = new QHBoxLayout(widgets.row);
@@ -1431,7 +1408,7 @@ void MainWindow::setMetadataContent(const MetadataWidgets &widgets, const QJsonV
     widgets.raw->setPlainText(rawText);
 }
 
-void MainWindow::setOverviewContent(const Nd2DocumentInfo &info)
+void MainWindow::setOverviewContent(const DocumentInfo &info)
 {
     if (!metadataOverviewTree_) {
         return;
@@ -1460,7 +1437,7 @@ void MainWindow::setOverviewContent(const Nd2DocumentInfo &info)
         loopsItem->setText(1, QStringLiteral("[%1 item%2]")
                                   .arg(info.loops.size())
                                   .arg(info.loops.size() == 1 ? QString() : QStringLiteral("s")));
-        for (const Nd2LoopInfo &loop : info.loops) {
+        for (const LoopInfo &loop : info.loops) {
             auto *loopItem = new QTreeWidgetItem(loopsItem);
             loopItem->setText(0, loop.label);
             loopItem->setText(1, QStringLiteral("%1, %2 steps").arg(loop.type, QString::number(loop.size)));
@@ -1552,7 +1529,7 @@ MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &sel
         const QFileInfo exportInfo(selectedPath);
         const QString baseStem = exportInfo.completeBaseName();
         const QDir outputDir = exportInfo.dir();
-        const Nd2DocumentInfo &info = controller_.documentInfo();
+        const DocumentInfo &info = controller_.documentInfo();
         const int channelCount = qMax(rawFrame.components, 1);
 
         for (int channelIndex = 0; channelIndex < channelCount; ++channelIndex) {
@@ -1687,7 +1664,7 @@ QString MainWindow::buildDefaultFrameSavePath(ExportScope scope, const QString &
         directory = QDir::homePath();
     }
 
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     const FrameCoordinateState &coordinates = controller_.coordinateState();
     QStringList nameParts{sanitizeToken(baseName)};
     for (int index = 0; index < info.loops.size() && index < coordinates.values.size(); ++index) {
@@ -1704,6 +1681,28 @@ QString MainWindow::buildDefaultFrameSavePath(ExportScope scope, const QString &
     }
 
     return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + extension);
+}
+
+void MainWindow::rebuildMetadataTabs()
+{
+    if (!metadataTabs_) {
+        return;
+    }
+
+    while (metadataTabs_->count() > 0) {
+        QWidget *page = metadataTabs_->widget(0);
+        metadataTabs_->removeTab(0);
+        delete page;
+    }
+    metadataSectionWidgets_.clear();
+
+    const DocumentInfo &info = controller_.documentInfo();
+    metadataSectionWidgets_.reserve(info.metadataSections.size());
+    for (const MetadataSection &section : info.metadataSections) {
+        metadataSectionWidgets_.push_back(addMetadataTab(section.title));
+    }
+
+    frameMetadataWidgets_ = addMetadataTab(tr("Frame Metadata"));
 }
 
 QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const
@@ -1726,7 +1725,7 @@ QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExpo
         directory = QDir::homePath();
     }
 
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     QStringList nameParts{sanitizeToken(baseName)};
     for (int index = 0; index < info.loops.size() && index < settings.fixedCoordinates.size(); ++index) {
         if (index == settings.timeLoopIndex) {
@@ -1755,7 +1754,7 @@ QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExpo
 
 int MainWindow::findTimeLoopIndex() const
 {
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     for (int index = 0; index < info.loops.size(); ++index) {
         if (info.loops.at(index).type == QStringLiteral("TimeLoop")) {
             return index;
@@ -2065,7 +2064,7 @@ void MainWindow::updateInfoLabel()
         return;
     }
 
-    const Nd2DocumentInfo &info = controller_.documentInfo();
+    const DocumentInfo &info = controller_.documentInfo();
     QStringList coords;
     for (int index = 0; index < info.loops.size() && index < controller_.coordinateState().values.size(); ++index) {
         coords << QStringLiteral("%1=%2").arg(info.loops.at(index).label).arg(controller_.coordinateState().values.at(index));

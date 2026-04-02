@@ -2,15 +2,28 @@
 
 #include <QColor>
 #include <QImage>
-#include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QMetaType>
 #include <QSize>
 #include <QString>
 #include <QVector>
 #include <QVector3D>
 
-struct Nd2LoopInfo
+enum class DocumentFormat
+{
+    Nd2,
+    Czi
+};
+
+struct MetadataSection
+{
+    QString title;
+    QJsonValue treeValue;
+    QString rawText;
+};
+
+struct LoopInfo
 {
     QString type;
     QString label;
@@ -18,7 +31,7 @@ struct Nd2LoopInfo
     QJsonObject details;
 };
 
-struct Nd2ChannelInfo
+struct ChannelInfo
 {
     int index = -1;
     QString name;
@@ -29,8 +42,9 @@ struct Nd2ChannelInfo
     QJsonObject volume;
 };
 
-struct Nd2DocumentInfo
+struct DocumentInfo
 {
+    DocumentFormat format = DocumentFormat::Nd2;
     QString filePath;
     int sequenceCount = 0;
     QSize frameSize;
@@ -40,12 +54,9 @@ struct Nd2DocumentInfo
     QString pixelDataType = QStringLiteral("unsigned");
     QVector3D axesCalibration;
     QVector3D voxelCount;
-    QVector<Nd2LoopInfo> loops;
-    QVector<Nd2ChannelInfo> channels;
-    QJsonDocument attributesJson;
-    QJsonDocument experimentJson;
-    QJsonDocument metadataJson;
-    QJsonDocument textInfoJson;
+    QVector<LoopInfo> loops;
+    QVector<ChannelInfo> channels;
+    QVector<MetadataSection> metadataSections;
 
     [[nodiscard]] bool isValid() const
     {
@@ -104,8 +115,9 @@ struct RenderedFrame
 };
 
 Q_DECLARE_METATYPE(ChannelRenderSettings)
+Q_DECLARE_METATYPE(ChannelInfo)
+Q_DECLARE_METATYPE(DocumentInfo)
 Q_DECLARE_METATYPE(FrameCoordinateState)
-Q_DECLARE_METATYPE(Nd2ChannelInfo)
-Q_DECLARE_METATYPE(Nd2DocumentInfo)
+Q_DECLARE_METATYPE(MetadataSection)
 Q_DECLARE_METATYPE(RawFrame)
 Q_DECLARE_METATYPE(RenderedFrame)

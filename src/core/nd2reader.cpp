@@ -105,7 +105,7 @@ QString Nd2Reader::filePath() const
     return info_.filePath;
 }
 
-const Nd2DocumentInfo &Nd2Reader::documentInfo() const
+const DocumentInfo &Nd2Reader::documentInfo() const
 {
     return info_;
 }
@@ -114,40 +114,6 @@ int Nd2Reader::sequenceCount() const
 {
     QMutexLocker locker(&mutex_);
     return info_.sequenceCount;
-}
-
-QVector<int> Nd2Reader::coordsForSequence(int sequenceIndex, QString *errorMessage) const
-{
-    QMutexLocker locker(&mutex_);
-    QVector<int> coords;
-
-    if (!handle_) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("No ND2 document is open.");
-        }
-        return coords;
-    }
-
-    const LIMSIZE coordCount = Lim_FileGetCoordsFromSeqIndex(handle_, static_cast<LIMUINT>(sequenceIndex), nullptr, 0);
-    coords.resize(static_cast<qsizetype>(coordCount));
-    if (coordCount == 0) {
-        return coords;
-    }
-
-    std::vector<LIMUINT> nativeCoords(coordCount, 0);
-    const LIMSIZE filled = Lim_FileGetCoordsFromSeqIndex(handle_, static_cast<LIMUINT>(sequenceIndex), nativeCoords.data(), nativeCoords.size());
-    if (filled != coordCount) {
-        coords.clear();
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("The SDK could not map the requested sequence index to loop coordinates.");
-        }
-        return coords;
-    }
-
-    for (LIMSIZE i = 0; i < coordCount; ++i) {
-        coords[static_cast<qsizetype>(i)] = static_cast<int>(nativeCoords[static_cast<size_t>(i)]);
-    }
-    return coords;
 }
 
 bool Nd2Reader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex, QString *errorMessage) const
@@ -214,24 +180,6 @@ RawFrame Nd2Reader::readFrame(int sequenceIndex, QString *errorMessage) const
     return frame;
 }
 
-QJsonDocument Nd2Reader::globalMetadata(QString *errorMessage) const
-{
-    QMutexLocker locker(&mutex_);
-    if (!handle_) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("No ND2 document is open.");
-        }
-        return {};
-    }
-
-    return parseJsonText(readJsonString(handle_, Lim_FileGetMetadata));
-}
-
-QJsonDocument Nd2Reader::frameMetadata(int sequenceIndex, QString *errorMessage) const
-{
-    return parseJsonText(frameMetadataText(sequenceIndex, errorMessage));
-}
-
 QString Nd2Reader::frameMetadataText(int sequenceIndex, QString *errorMessage) const
 {
     QMutexLocker locker(&mutex_);
@@ -243,6 +191,12 @@ QString Nd2Reader::frameMetadataText(int sequenceIndex, QString *errorMessage) c
     }
 
     return takeSdkString(Lim_FileGetFrameMetadata(handle_, static_cast<LIMUINT>(sequenceIndex)));
+}
+
+MetadataSection Nd2Reader::frameMetadataSection(int sequenceIndex, QString *errorMessage) const
+{
+    const QString rawText = frameMetadataText(sequenceIndex, errorMessage);
+    return metadataSection(QStringLiteral("Frame Metadata"), parseJsonText(rawText), rawText);
 }
 
 QJsonDocument Nd2Reader::parseJsonText(const QString &jsonText)
@@ -262,18 +216,19 @@ QJsonDocument Nd2Reader::parseJsonText(const QString &jsonText)
 bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
 {
     info_.sequenceCount = static_cast<int>(Lim_FileGetSeqCount(handle_));
+    info_.metadataSections.clear();
 
     const QString attributesText = readJsonString(handle_, Lim_FileGetAttributes);
     const QString experimentText = readJsonString(handle_, Lim_FileGetExperiment);
     const QString metadataText = readJsonString(handle_, Lim_FileGetMetadata);
     const QString textInfoText = readJsonString(handle_, Lim_FileGetTextinfo);
 
-    info_.attributesJson = parseJsonText(attributesText);
-    info_.experimentJson = parseJsonText(experimentText);
-    info_.metadataJson = parseJsonText(metadataText);
-    info_.textInfoJson = parseJsonText(textInfoText);
+    const QJsonDocument attributesJson = parseJsonText(attributesText);
+    const QJsonDocument experimentJson = parseJsonText(experimentText);
+    const QJsonDocument metadataJson = parseJsonText(metadataText);
+    const QJsonDocument textInfoJson = parseJsonText(textInfoText);
 
-    const QJsonObject attributesObject = info_.attributesJson.object();
+    const QJsonObject attributesObject = attributesJson.object();
     info_.bitsPerComponentInMemory = firstIntValue(attributesObject, {"bitsPerComponentInMemory", "bitsPerComponent", "bits"});
     info_.bitsPerComponentSignificant = firstIntValue(attributesObject, {"bitsPerComponentSignificant", "significantBits"}, info_.bitsPerComponentInMemory);
     info_.componentCount = firstIntValue(attributesObject, {"componentCount", "components"}, 1);
@@ -283,9 +238,9 @@ bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
         firstIntValue(attributesObject, {"heightPx", "height"}, 0)
     );
 
-    const QJsonObject metadataObject = info_.metadataJson.object();
+    const QJsonObject metadataObject = metadataJson.object();
     const QJsonObject contentsObject = metadataObject.value(QStringLiteral("contents")).toObject();
-    const QJsonObject firstVolume = firstChannelVolume(info_.metadataJson);
+    const QJsonObject firstVolume = firstChannelVolume(metadataJson);
     if (info_.sequenceCount <= 0) {
         info_.sequenceCount = firstIntValue(attributesObject, {"sequenceCount", "frameCount"},
                                             firstIntValue(contentsObject, {"frameCount", "sequenceCount"}, 0));
@@ -300,12 +255,13 @@ bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
     info_.voxelCount = parseVector3(firstVolume.value(QStringLiteral("voxelCount")));
 
     const LIMSIZE coordSize = Lim_FileGetCoordSize(handle_);
-    const QJsonArray experimentArray = info_.experimentJson.array();
+    const QJsonArray experimentArray = experimentJson.array();
+    info_.loops.clear();
     info_.loops.reserve(static_cast<qsizetype>(coordSize));
     std::array<LIMCHAR, 256> buffer{};
     for (LIMSIZE i = 0; i < coordSize; ++i) {
         const LIMUINT loopSize = Lim_FileGetCoordInfo(handle_, static_cast<LIMUINT>(i), buffer.data(), buffer.size());
-        Nd2LoopInfo loop;
+        LoopInfo loop;
         loop.type = QString::fromUtf8(buffer.data());
         loop.label = loopLabel(loop.type, static_cast<int>(i));
         loop.size = static_cast<int>(loopSize);
@@ -317,10 +273,11 @@ bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
     }
 
     const QJsonArray channelsArray = metadataObject.value(QStringLiteral("channels")).toArray();
+    info_.channels.clear();
     info_.channels.reserve(channelsArray.size());
     for (const QJsonValue &channelValue : channelsArray) {
         const QJsonObject channelObject = channelValue.toObject();
-        Nd2ChannelInfo channel;
+        ChannelInfo channel;
         const QJsonObject innerChannel = channelObject.value(QStringLiteral("channel")).toObject();
         channel.index = firstIntValue(innerChannel, {"index", "id"}, info_.channels.size());
         channel.name = firstStringValue(innerChannel, {"name", "label"}, QStringLiteral("Channel %1").arg(channel.index + 1));
@@ -342,7 +299,7 @@ bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
         const int channelCount = qMax(info_.componentCount, 1);
         info_.channels.reserve(channelCount);
         for (int i = 0; i < channelCount; ++i) {
-            Nd2ChannelInfo channel;
+            ChannelInfo channel;
             channel.index = i;
             channel.name = QStringLiteral("Channel %1").arg(i + 1);
             channel.color = fallbackColors.at(i % fallbackColors.size());
@@ -373,6 +330,13 @@ bool Nd2Reader::loadDocumentInfo(QString *errorMessage)
         }
         return false;
     }
+
+    info_.metadataSections = {
+        metadataSection(QStringLiteral("Attributes"), attributesJson, attributesText),
+        metadataSection(QStringLiteral("Experiment"), experimentJson, experimentText),
+        metadataSection(QStringLiteral("Text Info"), textInfoJson, textInfoText),
+        metadataSection(QStringLiteral("Document Metadata"), metadataJson, metadataText),
+    };
 
     return true;
 }
@@ -469,9 +433,20 @@ QString Nd2Reader::loopLabel(const QString &type, int index)
     return QStringLiteral("Loop %1").arg(index + 1);
 }
 
-Nd2DocumentInfo Nd2Reader::buildFallbackInfo(const QString &path)
+DocumentInfo Nd2Reader::buildFallbackInfo(const QString &path)
 {
-    Nd2DocumentInfo info;
+    DocumentInfo info;
+    info.format = DocumentFormat::Nd2;
     info.filePath = path;
     return info;
+}
+
+MetadataSection Nd2Reader::metadataSection(const QString &title, const QJsonDocument &document, const QString &rawText)
+{
+    MetadataSection section;
+    section.title = title;
+    section.treeValue = document.isArray() ? QJsonValue(document.array())
+                                           : (document.isObject() ? QJsonValue(document.object()) : QJsonValue(QJsonValue::Null));
+    section.rawText = rawText.isEmpty() ? QString::fromUtf8(document.toJson(QJsonDocument::Indented)) : rawText;
+    return section;
 }

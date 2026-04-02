@@ -1,11 +1,14 @@
 #pragma once
 
+#include "core/documentreader.h"
+#include "core/documentreaderfactory.h"
 #include "core/framecache.h"
 #include "core/framerenderer.h"
-#include "core/nd2reader.h"
 
 #include <QFutureWatcher>
 #include <QObject>
+
+#include <memory>
 
 class DocumentController : public QObject
 {
@@ -20,13 +23,12 @@ public:
 
     [[nodiscard]] bool hasDocument() const;
     [[nodiscard]] QString currentPath() const;
-    [[nodiscard]] const Nd2DocumentInfo &documentInfo() const;
+    [[nodiscard]] const DocumentInfo &documentInfo() const;
     [[nodiscard]] const FrameCoordinateState &coordinateState() const;
     [[nodiscard]] const QVector<ChannelRenderSettings> &channelSettings() const;
     [[nodiscard]] const RenderedFrame &renderedFrame() const;
     [[nodiscard]] const RawFrame &currentRawFrame() const;
-    [[nodiscard]] QString currentFrameMetadataText() const;
-    [[nodiscard]] QJsonDocument currentFrameMetadata() const;
+    [[nodiscard]] const MetadataSection &currentFrameMetadataSection() const;
     [[nodiscard]] QString pixelInfoAt(const QPoint &pixelPosition) const;
 
 public slots:
@@ -54,8 +56,7 @@ private:
         int sequenceIndex = -1;
         bool success = false;
         RawFrame frame;
-        QJsonDocument metadata;
-        QString metadataText;
+        MetadataSection metadataSection;
         RenderedFrame renderedFrame;
         QVector<ChannelRenderSettings> channelSettings;
         bool channelSettingsChanged = false;
@@ -69,15 +70,15 @@ private:
     void finishQueuedFrameIfNeeded();
     int resolveSequenceIndexForCurrentState(QString *errorMessage = nullptr) const;
     void rerenderCurrentFrame(bool updateAutoContrast);
+    [[nodiscard]] static const DocumentInfo &emptyDocumentInfo();
 
-    Nd2Reader reader_;
+    std::unique_ptr<DocumentReader> reader_;
     FrameCache frameCache_;
     FrameCoordinateState coordinateState_;
     QVector<ChannelRenderSettings> channelSettings_;
     RawFrame currentRawFrame_;
     RenderedFrame renderedFrame_;
-    QJsonDocument currentFrameMetadata_;
-    QString currentFrameMetadataText_;
+    MetadataSection currentFrameMetadataSection_;
     int currentSequenceIndex_ = -1;
     int queuedSequenceIndex_ = -1;
     int requestCounter_ = 0;

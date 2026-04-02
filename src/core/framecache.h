@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/nd2types.h"
+#include "core/documenttypes.h"
 
 #include <QHash>
 #include <QMutex>

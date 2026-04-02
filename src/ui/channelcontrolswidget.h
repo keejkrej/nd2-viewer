@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/nd2types.h"
+#include "core/documenttypes.h"
 
 #include <QWidget>
 
@@ -17,7 +17,7 @@ class ChannelRowWidget : public QWidget
 public:
     explicit ChannelRowWidget(QWidget *parent = nullptr);
 
-    void setChannel(const Nd2ChannelInfo &channel, const ChannelRenderSettings &settings);
+    void setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings);
 
 signals:
     void settingsEdited(const ChannelRenderSettings &settings);
@@ -48,7 +48,7 @@ class ChannelControlsWidget : public QWidget
 public:
     explicit ChannelControlsWidget(QWidget *parent = nullptr);
 
-    void setChannels(const QVector<Nd2ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings);
+    void setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings);
     void updateSettings(const QVector<ChannelRenderSettings> &settings);
 
 signals:
@@ -64,5 +64,5 @@ private:
     QLabel *emptyStateLabel_ = nullptr;
     QPushButton *autoAllButton_ = nullptr;
     QVector<ChannelRowWidget *> rows_;
-    QVector<Nd2ChannelInfo> channels_;
+    QVector<ChannelInfo> channels_;
 };

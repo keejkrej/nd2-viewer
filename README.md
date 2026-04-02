@@ -1,6 +1,6 @@
 # nd2-viewer
 
-A Qt 6 desktop viewer for Nikon ND2 and Zeiss CZI microscopy files.
+nd2-viewer is a qt6 desktop viewer for ND^2 data not just nd2.
 
 ## Features
 

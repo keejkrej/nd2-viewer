@@ -1,6 +1,6 @@
 # nd2-viewer
 
-nd2-viewer is a qt6 desktop viewer for ND^2 data not just nd2.
+nd2-viewer is a qt6 desktop viewer for ND^2 (n-dimensional data) instead of nd2.
 
 ## Features
 

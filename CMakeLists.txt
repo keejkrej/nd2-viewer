@@ -101,11 +101,17 @@ if(WIN32)
 endif()
 
 if(APPLE)
+  set(MACOSX_BUNDLE_ICON_FILE app-icon.icns)
+  set_source_files_properties(src/resources/app-icon.icns PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources"
+  )
+  target_sources(nd2-viewer PRIVATE src/resources/app-icon.icns)
   set_target_properties(nd2-viewer PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "nd2-viewer"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.nd2viewer.app"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_ICON_FILE ${MACOSX_BUNDLE_ICON_FILE}
   )
 endif()
 

@@ -16,20 +16,6 @@
 
 namespace
 {
-QVector<int> buildTimeValues(const MovieExportSettings &settings)
-{
-    QVector<int> values;
-    if (settings.timeLoopIndex < 0 || settings.endFrame < settings.startFrame) {
-        return values;
-    }
-
-    const int step = qMax(settings.frameStep(), 1);
-    for (int timeValue = settings.startFrame; timeValue <= settings.endFrame; timeValue += step) {
-        values.push_back(timeValue);
-    }
-    return values;
-}
-
 MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings, DocumentReader *reader)
 {
     MovieExportResult result;
@@ -114,6 +100,29 @@ MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings
 }
 } // namespace
 
+QVector<int> buildTimeFrameValues(int startFrame, int endFrame, int step)
+{
+    QVector<int> values;
+    if (endFrame < startFrame) {
+        return values;
+    }
+
+    const int safeStep = qMax(step, 1);
+    for (int timeValue = startFrame; timeValue <= endFrame; timeValue += safeStep) {
+        values.push_back(timeValue);
+    }
+    return values;
+}
+
+QVector<int> buildTimeFrameValues(const MovieExportSettings &settings)
+{
+    if (settings.timeLoopIndex < 0) {
+        return {};
+    }
+
+    return buildTimeFrameValues(settings.startFrame, settings.endFrame, settings.frameStep());
+}
+
 MovieExportEstimate estimateMovieExport(const MovieExportSettings &settings, const QImage &sampleImage)
 {
     MovieExportEstimate estimate;
@@ -167,7 +176,7 @@ MovieExportEstimate estimateMovieExport(const MovieExportSettings &settings, con
 
 int movieExportFrameCount(const MovieExportSettings &settings)
 {
-    return buildTimeValues(settings).size();
+    return buildTimeFrameValues(settings).size();
 }
 
 MovieExportWorker::MovieExportWorker(const MovieExportSettings &settings, QObject *parent)
@@ -186,7 +195,7 @@ void MovieExportWorker::start()
         return;
     }
 
-    timeValues_ = buildTimeValues(settings_);
+    timeValues_ = buildTimeFrameValues(settings_);
     result_.outputPath = settings_.outputPath;
 
     initializeRecorder();

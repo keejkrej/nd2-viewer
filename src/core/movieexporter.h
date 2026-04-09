@@ -55,6 +55,8 @@ Q_DECLARE_METATYPE(MovieExportSettings)
 Q_DECLARE_METATYPE(MovieExportEstimate)
 Q_DECLARE_METATYPE(MovieExportResult)
 
+[[nodiscard]] QVector<int> buildTimeFrameValues(int startFrame, int endFrame, int step);
+[[nodiscard]] QVector<int> buildTimeFrameValues(const MovieExportSettings &settings);
 [[nodiscard]] MovieExportEstimate estimateMovieExport(const MovieExportSettings &settings, const QImage &sampleImage);
 [[nodiscard]] int movieExportFrameCount(const MovieExportSettings &settings);
 

@@ -6,6 +6,8 @@
 - The primary workflow on this machine is Windows with Qt `6.11.0` and `msvc2022_64`.
 - The repo also supports macOS Apple Silicon builds via Homebrew Qt 6 and the Nikon macOS shared SDK.
 - On Windows, Nikon's shared ND2 SDK is expected at `C:\Program Files\nd2readsdk-shared`.
+- The Nikon SDK is not vendored in this repo; install it separately and override `ND2SDK_ROOT` if it is not in the default location.
+- `libCZI` must exist at `third_party/libczi`; if it is missing, clone it with `git clone https://github.com/ZEISS/libczi.git third_party/libczi`.
 
 ## Preferred Build And Run Commands
 

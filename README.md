@@ -26,6 +26,26 @@ The project supports:
 - Windows: `Qt 6 msvc2022_64` plus the Nikon Windows SDK
 - macOS Apple Silicon: Homebrew `Qt 6` plus the Nikon macOS shared SDK
 
+### Dependency setup
+
+Before building, make sure the external reader dependencies are present:
+
+- Install Nikon's shared ND2 SDK and point `ND2SDK_ROOT` at it.
+- Clone `libCZI` into `third_party/libczi`.
+
+Typical setup commands:
+
+```powershell
+git clone https://github.com/ZEISS/libczi.git third_party/libczi
+```
+
+Expected SDK locations on the main supported platforms:
+
+- Windows: install the Nikon shared SDK so it is available at `C:\Program Files\nd2readsdk-shared`, or override `ND2SDK_ROOT`.
+- macOS Apple Silicon: unpack/install the Nikon shared SDK so it is available at `$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`, or override `ND2SDK_ROOT`.
+
+The build uses the vendored `libCZI` checkout at `third_party/libczi`, so if that directory is missing or empty the configure step will fail until it is cloned there.
+
 The easiest path is:
 
 ```powershell

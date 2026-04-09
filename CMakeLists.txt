@@ -69,7 +69,6 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/documenttypes.h
   src/core/czireader.cpp
   src/core/czireader.h
-  src/core/framecache.h
   src/core/framerenderer.cpp
   src/core/framerenderer.h
   src/core/movieexporter.cpp

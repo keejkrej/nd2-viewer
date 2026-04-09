@@ -4,7 +4,6 @@
 
 DocumentController::DocumentController(QObject *parent)
     : QObject(parent)
-    , frameCache_(10)
 {
     connect(&frameWatcher_, &QFutureWatcher<FrameLoadResult>::finished, this, &DocumentController::handleFrameLoadFinished);
 }
@@ -38,7 +37,6 @@ bool DocumentController::openFile(const QString &path)
     renderedFrame_ = {};
     currentRawFrame_ = {};
     currentFrameMetadataSection_ = {};
-    frameCache_.clear();
     channelSettingsRevision_ = 0;
 
     emit documentChanged();
@@ -61,7 +59,6 @@ void DocumentController::closeFile()
         reader_->close();
         reader_.reset();
     }
-    frameCache_.clear();
     coordinateState_ = {};
     channelSettings_.clear();
     currentRawFrame_ = {};
@@ -249,15 +246,11 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
         result.settingsRevision = settingsRevision;
         result.sequenceIndex = sequenceIndex;
 
-        RawFrame frame;
-        if (!frameCache_.tryGet(sequenceIndex, &frame)) {
-            QString frameError;
-            frame = reader_->readFrame(sequenceIndex, &frameError);
-            if (!frame.isValid()) {
-                result.error = frameError;
-                return result;
-            }
-            frameCache_.insert(frame);
+        QString frameError;
+        RawFrame frame = reader_->readFrame(sequenceIndex, &frameError);
+        if (!frame.isValid()) {
+            result.error = frameError;
+            return result;
         }
 
         QString metadataError;

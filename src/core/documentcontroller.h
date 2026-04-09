@@ -2,7 +2,6 @@
 
 #include "core/documentreader.h"
 #include "core/documentreaderfactory.h"
-#include "core/framecache.h"
 #include "core/framerenderer.h"
 
 #include <QFutureWatcher>
@@ -73,7 +72,6 @@ private:
     [[nodiscard]] static const DocumentInfo &emptyDocumentInfo();
 
     std::unique_ptr<DocumentReader> reader_;
-    FrameCache frameCache_;
     FrameCoordinateState coordinateState_;
     QVector<ChannelRenderSettings> channelSettings_;
     RawFrame currentRawFrame_;

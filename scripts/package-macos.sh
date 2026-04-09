@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Like scripts/package-msvc.ps1: configure + build, bundle Qt into the .app, then CPack (DMG).
 
 set -euo pipefail
 
@@ -75,12 +76,24 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_path="${repo_root}/${build_dir}"
 output_path="${repo_root}/${output_dir}"
 cpack_config="${build_path}/CPackConfig.cmake"
+app_bundle="${build_path}/bin/nd2-viewer.app"
 
 CMAKE_BUILD_TYPE="${configuration}" \
 BUILD_DIR="${build_dir}" \
 Qt6_DIR="${qt6_dir}" \
 ND2SDK_ROOT="${nd2sdk_root}" \
-"${repo_root}/scripts/build-macos.sh"
+"${repo_root}/scripts/build-macos.sh" \
+  --configuration "${configuration}" \
+  --qt6-dir "${qt6_dir}" \
+  --nd2sdk-root "${nd2sdk_root}"
+
+if [[ ! -d "${app_bundle}" ]]; then
+  echo "App bundle not found at '${app_bundle}'." >&2
+  exit 1
+fi
+
+# Bundle Qt into the .app and ad-hoc sign (required for a portable DMG).
+bash "${repo_root}/scripts/macos-macdeployqt.sh" "${app_bundle}" "${qt6_dir}"
 
 if [[ ! -f "${cpack_config}" ]]; then
   echo "CPackConfig.cmake not found at '${cpack_config}'." >&2

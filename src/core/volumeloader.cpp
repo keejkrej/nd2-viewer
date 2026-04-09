@@ -70,10 +70,10 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
                                     const QVector<ChannelRenderSettings> &seedChannelSettings)
 {
     VolumeLoadResult result;
-    qInfo("3D volume load requested: path=%s loops=%d channels=%d frame=%dx%d",
+    qInfo("3D volume load requested: path=%s loops=%lld channels=%lld frame=%dx%d",
           qPrintable(path),
-          info.loops.size(),
-          info.channels.size(),
+          static_cast<long long>(info.loops.size()),
+          static_cast<long long>(info.channels.size()),
           info.frameSize.width(),
           info.frameSize.height());
 

@@ -12,10 +12,10 @@
 ## Preferred Build And Run Commands
 
 - Day-to-day debug build: `.\scripts\build-msvc.ps1`
-- Run the built app: `.\scripts\run-msvc.ps1`
+- Run the built app: `.\build-msvc\bin\nd2-viewer.exe` (or your chosen `-BuildDir`)
 - Release packaging entrypoint: `.\scripts\package-msvc.ps1`
 - Portable package instead of installer: `.\scripts\package-msvc.ps1 -Generator ZIP`
-- macOS debug build: `./scripts/build-macos.sh`
+- macOS debug build: `./scripts/build-macos.sh` (skips slow `macdeployqt` by default; `./scripts/package-macos.sh` deploys for the DMG)
 - macOS packaging entrypoint: `./scripts/package-macos.sh`
 
 ## Important Toolchain Note

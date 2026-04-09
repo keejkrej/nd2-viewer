@@ -18,6 +18,7 @@ class QSlider;
 class QSpinBox;
 class QTabWidget;
 class QTimer;
+class QToolButton;
 class QTreeWidget;
 class QVideoFrameInput;
 class QVBoxLayout;

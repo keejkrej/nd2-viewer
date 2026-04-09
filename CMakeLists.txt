@@ -209,15 +209,6 @@ else()
   )
 endif()
 
-if(WIN32)
-  add_executable(cpack-nsis-wrapper
-    scripts/cpack-nsis-wrapper.cpp
-  )
-  set_target_properties(cpack-nsis-wrapper PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools"
-  )
-endif()
-
 if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
   file(GLOB ND2_SDK_DLLS "${ND2SDK_ROOT}/bin/*.dll")
   foreach(nd2_sdk_dll IN LISTS ND2_SDK_DLLS)
@@ -227,25 +218,6 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
         "$<TARGET_FILE_DIR:nd2-viewer>"
     )
   endforeach()
-
-  if(TARGET Qt6::qmake)
-    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-    if(QT_QMAKE_EXECUTABLE)
-      get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
-      find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}")
-      if(WINDEPLOYQT_EXECUTABLE)
-        set(WINDEPLOYQT_ARGS --no-translations)
-        if(MSVC)
-          list(APPEND WINDEPLOYQT_ARGS --no-compiler-runtime)
-        endif()
-
-        add_custom_command(TARGET nd2-viewer POST_BUILD
-          COMMAND "${WINDEPLOYQT_EXECUTABLE}" ${WINDEPLOYQT_ARGS} "$<TARGET_FILE:nd2-viewer>"
-          COMMENT "Deploying Qt runtime dependencies"
-        )
-      endif()
-    endif()
-  endif()
 
 endif()
 
@@ -293,20 +265,6 @@ if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
         "${ND2VIEWER_APP_FRAMEWORKS_DIR}"
     )
   endforeach()
-
-  if(TARGET Qt6::qmake)
-    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-    if(QT_QMAKE_EXECUTABLE)
-      get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
-      find_program(MACDEPLOYQT_EXECUTABLE macdeployqt HINTS "${QT_BIN_DIR}")
-      if(MACDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET nd2-viewer POST_BUILD
-          COMMAND "${MACDEPLOYQT_EXECUTABLE}" "$<TARGET_BUNDLE_DIR:nd2-viewer>" -always-overwrite
-          COMMENT "Deploying macOS app bundle dependencies"
-        )
-      endif()
-    endif()
-  endif()
 endif()
 
 if(NOT APPLE)
@@ -351,11 +309,12 @@ if(WIN32)
   set(CPACK_NSIS_INSTALLED_ICON_NAME "nd2-viewer.exe")
   set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
   set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
-  # CPack's stock NSIS template hard-codes admin/UAC behavior, so route
-  # makensis through a small native wrapper that patches the generated script first.
-  set(CPACK_NSIS_EXECUTABLE "${CMAKE_BINARY_DIR}/tools/cpack-nsis-wrapper.exe")
+  # CPack's stock NSIS template hard-codes admin/UAC behavior; nsis-cpack.ps1 patches
+  # the generated script then runs makensis (argument normalization matches old C++ wrapper).
+  set(CPACK_NSIS_EXECUTABLE "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
   set(CPACK_NSIS_EXECUTABLE_PRE_ARGUMENTS
-    "--powershell-script" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/invoke-makensis-wrapper.ps1"
+    "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/nsis-cpack.ps1"
   )
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)

@@ -44,6 +44,9 @@ if ($Generator -eq "NSIS") {
     -QtRoot $QtRoot `
     -Nd2SdkRoot $Nd2SdkRoot
 
+$exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
+& (Join-Path $PSScriptRoot "msvc-windeployqt.ps1") -QtRoot $QtRoot -ExePath $exePath
+
 if (!(Test-Path $cpackConfig)) {
     throw "CPackConfig.cmake not found at '$cpackConfig'. The configure step did not produce packaging metadata."
 }

@@ -50,10 +50,10 @@ The easiest path is:
 
 ```powershell
 .\scripts\build-msvc.ps1
-.\scripts\run-msvc.ps1
+.\build-msvc\bin\nd2-viewer.exe
 ```
 
-The helper script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
+The build script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
 
 On macOS, the easiest path is:
 
@@ -73,6 +73,7 @@ That script defaults to:
 - `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
 - `build_dir=build-macos`
 - `configuration=Debug`
+- **No** `macdeployqt` during normal builds (it can take many minutes); `./scripts/package-macos.sh` runs it when producing a DMG, or run `scripts/macos-macdeployqt.sh` manually on the `.app` if you need a self-contained bundle.
 
 If your SDK lives elsewhere, override `ND2SDK_ROOT` when invoking the script.
 
@@ -113,7 +114,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G
 ## Notes
 
 - `CMakeLists.txt` copies the ND2 SDK runtime DLLs and the vendored `libCZI` runtime after build.
-- If `windeployqt` is available from the selected Qt kit, it is run automatically after build.
+- On Windows, `scripts/package-msvc.ps1` runs `scripts/msvc-windeployqt.ps1` before CPack so the packaged app includes Qt DLLs (day-to-day builds skip this step).
 - The 3D viewer uses Qt OpenGL and ships as part of the normal desktop app, there is no Napari runtime dependency.
 - CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.

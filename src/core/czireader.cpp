@@ -11,6 +11,7 @@
 #include <exception>
 #include <map>
 #include <set>
+#include <string>
 
 namespace
 {
@@ -73,7 +74,11 @@ bool CziReader::open(const QString &path, QString *errorMessage)
     info_ = buildFallbackInfo(path);
 
     try {
-        stream_ = libCZI::CreateStreamFromFile(reinterpret_cast<const wchar_t *>(path.utf16()));
+        // libCZI converts wchar_t → UTF-8 for fopen. On Windows wchar_t is UTF-16; on macOS/Linux it is
+        // UTF-32. Do not pass QString::utf16() as wchar_t* on POSIX — UTF-16 surrogate pairs are invalid
+        // UTF-32 and trigger std::wstring_convert errors inside libCZI.
+        const std::wstring wpath = path.toStdWString();
+        stream_ = libCZI::CreateStreamFromFile(wpath.c_str());
         if (!stream_) {
             if (errorMessage) {
                 *errorMessage = QStringLiteral("Failed to create a libCZI file stream.");

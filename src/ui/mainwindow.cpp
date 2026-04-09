@@ -1022,6 +1022,7 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     if (movieExportInProgress_) {
         return;
     }
+    stopTimePlayback();
 
     const QImage currentImage = controller_.renderedFrame().image;
     const RawFrame &rawFrame = controller_.currentRawFrame();
@@ -1133,6 +1134,12 @@ void MainWindow::updateFrameUi()
 {
     imageViewport_->setImage(controller_.renderedFrame().image);
     updateInfoLabel();
+    if (timePlaybackActive_ && timePlaybackAwaitingFrame_) {
+        timePlaybackAwaitingFrame_ = false;
+        if (!timePlaybackTimeValues_.isEmpty()) {
+            timePlaybackNextFrameIndex_ = (timePlaybackNextFrameIndex_ + 1) % timePlaybackTimeValues_.size();
+        }
+    }
     if (movieExportInProgress_ && movieExportAwaitingFrame_) {
         prepareCurrentMovieExportFrame();
     }
@@ -1336,6 +1343,9 @@ void MainWindow::buildCentralUi()
 
 void MainWindow::rebuildNavigatorControls()
 {
+    stopTimePlayback();
+    timePlaybackButton_ = nullptr;
+    timePlaybackLoopIndex_ = -1;
     clearLayout(navigatorRowsLayout_);
     loopControls_.clear();
 
@@ -1347,6 +1357,8 @@ void MainWindow::rebuildNavigatorControls()
         navigatorRowsLayout_->addStretch(1);
         return;
     }
+
+    const int timeLoopIndex = findTimeLoopIndex();
 
     for (int index = 0; index < info.loops.size(); ++index) {
         const LoopInfo &loop = info.loops.at(index);
@@ -1366,10 +1378,22 @@ void MainWindow::rebuildNavigatorControls()
         widgets.spinBox->setRange(0, qMax(loop.size - 1, 0));
         widgets.details = new QLabel(QStringLiteral("%1 · %2 steps").arg(loop.type, QString::number(loop.size)), widgets.row);
         widgets.details->setMinimumWidth(120);
+        QToolButton *playButton = nullptr;
+        if (index == timeLoopIndex) {
+            playButton = new QToolButton(widgets.row);
+            playButton->setCheckable(true);
+            playButton->setText(tr("Play"));
+            playButton->setToolTip(tr("Play or pause time loop playback."));
+            timePlaybackButton_ = playButton;
+            timePlaybackLoopIndex_ = index;
+        }
 
         rowLayout->addWidget(widgets.label);
         rowLayout->addWidget(widgets.slider, 1);
         rowLayout->addWidget(widgets.spinBox);
+        if (playButton) {
+            rowLayout->addWidget(playButton);
+        }
         rowLayout->addWidget(widgets.details);
 
         navigatorRowsLayout_->addWidget(widgets.row);
@@ -1397,6 +1421,10 @@ void MainWindow::rebuildNavigatorControls()
             loopWidgets.slider->setValue(value);
             controller_.setCoordinateValue(index, value);
         });
+
+        if (playButton) {
+            connect(playButton, &QToolButton::toggled, this, &MainWindow::toggleTimePlayback);
+        }
     }
 
     navigatorRowsLayout_->addStretch(1);
@@ -1410,6 +1438,103 @@ void MainWindow::commitLoopSliderValue(int loopIndex)
 
     const auto &loopWidgets = loopControls_.at(loopIndex);
     controller_.setCoordinateValue(loopIndex, loopWidgets.slider->sliderPosition());
+}
+
+void MainWindow::toggleTimePlayback(bool enabled)
+{
+    if (enabled) {
+        startTimePlayback();
+    } else {
+        stopTimePlayback();
+    }
+}
+
+void MainWindow::startTimePlayback()
+{
+    if (movieExportInProgress_ || !controller_.hasDocument() || timePlaybackLoopIndex_ < 0) {
+        stopTimePlayback();
+        return;
+    }
+
+    const DocumentInfo &info = controller_.documentInfo();
+    if (timePlaybackLoopIndex_ >= info.loops.size()) {
+        stopTimePlayback();
+        return;
+    }
+
+    const int lastFrame = info.loops.at(timePlaybackLoopIndex_).size - 1;
+    timePlaybackTimeValues_ = buildTimeFrameValues(0, lastFrame, 1);
+    if (timePlaybackTimeValues_.isEmpty()) {
+        stopTimePlayback();
+        return;
+    }
+
+    const QVector<int> coordinateValues = controller_.coordinateState().values;
+    const int currentTimeValue = (timePlaybackLoopIndex_ < coordinateValues.size()) ? coordinateValues.at(timePlaybackLoopIndex_) : 0;
+    const int currentIndex = timePlaybackTimeValues_.indexOf(currentTimeValue);
+    if (currentIndex >= 0) {
+        timePlaybackNextFrameIndex_ = (currentIndex + 1) % timePlaybackTimeValues_.size();
+    } else {
+        timePlaybackNextFrameIndex_ = 0;
+    }
+
+    if (!timePlaybackTimer_) {
+        timePlaybackTimer_ = new QTimer(this);
+        connect(timePlaybackTimer_, &QTimer::timeout, this, &MainWindow::advanceTimePlayback);
+    }
+    timePlaybackTimer_->setInterval(100);
+    timePlaybackAwaitingFrame_ = false;
+    timePlaybackActive_ = true;
+    if (timePlaybackButton_) {
+        const QSignalBlocker blocker(timePlaybackButton_);
+        timePlaybackButton_->setChecked(true);
+        timePlaybackButton_->setText(tr("Pause"));
+    }
+    statusBar()->showMessage(tr("Playing time loop…"));
+    timePlaybackTimer_->start();
+}
+
+void MainWindow::stopTimePlayback()
+{
+    const bool wasActive = timePlaybackActive_;
+    timePlaybackActive_ = false;
+    timePlaybackAwaitingFrame_ = false;
+    timePlaybackNextFrameIndex_ = 0;
+    timePlaybackTimeValues_.clear();
+
+    if (timePlaybackTimer_) {
+        timePlaybackTimer_->stop();
+    }
+    if (timePlaybackButton_) {
+        const QSignalBlocker blocker(timePlaybackButton_);
+        timePlaybackButton_->setChecked(false);
+        timePlaybackButton_->setText(tr("Play"));
+    }
+
+    if (wasActive) {
+        statusBar()->showMessage(tr("Time playback paused."), 2000);
+    }
+}
+
+void MainWindow::advanceTimePlayback()
+{
+    if (!timePlaybackActive_ || timePlaybackAwaitingFrame_ || timePlaybackLoopIndex_ < 0 || timePlaybackTimeValues_.isEmpty()) {
+        return;
+    }
+
+    if (timePlaybackNextFrameIndex_ >= timePlaybackTimeValues_.size()) {
+        timePlaybackNextFrameIndex_ = 0;
+    }
+
+    const int nextTimeValue = timePlaybackTimeValues_.at(timePlaybackNextFrameIndex_);
+    const QVector<int> coordinateValues = controller_.coordinateState().values;
+    if (timePlaybackLoopIndex_ < coordinateValues.size() && coordinateValues.at(timePlaybackLoopIndex_) == nextTimeValue) {
+        timePlaybackNextFrameIndex_ = (timePlaybackNextFrameIndex_ + 1) % timePlaybackTimeValues_.size();
+        return;
+    }
+
+    timePlaybackAwaitingFrame_ = true;
+    controller_.setCoordinateValue(timePlaybackLoopIndex_, nextTimeValue);
 }
 
 MainWindow::MetadataWidgets MainWindow::addMetadataTab(const QString &title)
@@ -1820,6 +1945,8 @@ bool MainWindow::hasUsableZStack() const
 
 void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
 {
+    stopTimePlayback();
+
     QMediaFormat format(QMediaFormat::MPEG4);
     format.setVideoCodec(QMediaFormat::VideoCodec::H264);
     format.setAudioCodec(QMediaFormat::AudioCodec::Unspecified);
@@ -1833,11 +1960,7 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
     cleanupMovieExportPlayback();
 
     movieExportSettings_ = settings;
-    movieExportTimeValues_.clear();
-    const int step = qMax(movieExportSettings_.frameStep(), 1);
-    for (int timeValue = movieExportSettings_.startFrame; timeValue <= movieExportSettings_.endFrame; timeValue += step) {
-        movieExportTimeValues_.push_back(timeValue);
-    }
+    movieExportTimeValues_ = buildTimeFrameValues(movieExportSettings_);
 
     if (movieExportTimeValues_.isEmpty()) {
         QMessageBox::warning(this,
@@ -2083,6 +2206,9 @@ void MainWindow::setMovieExportUiState(bool active)
     }
     if (quitAction_) {
         quitAction_->setEnabled(!active);
+    }
+    if (timePlaybackButton_) {
+        timePlaybackButton_->setEnabled(!active);
     }
     if (threeDViewAction_) {
         threeDViewAction_->setEnabled(!active && hasUsableZStack());

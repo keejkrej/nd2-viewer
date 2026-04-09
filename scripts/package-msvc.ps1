@@ -15,10 +15,13 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildPath = Join-Path $repoRoot $BuildDir
 $outputPath = Join-Path $repoRoot $OutputDir
 $cpackConfig = Join-Path $buildPath "CPackConfig.cmake"
+$makensisPath = $null
 
 if ($Generator -eq "NSIS") {
     $nsisCommand = Get-Command "makensis.exe" -ErrorAction SilentlyContinue
-    if (-not $nsisCommand) {
+    if ($nsisCommand) {
+        $makensisPath = $nsisCommand.Source
+    } else {
         $nsisCandidates = @(
             "C:\Program Files (x86)\NSIS\makensis.exe",
             "C:\Program Files (x86)\NSIS\Bin\makensis.exe",
@@ -26,9 +29,9 @@ if ($Generator -eq "NSIS") {
             "C:\Program Files\NSIS\Bin\makensis.exe"
         )
 
-        $nsisPath = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if ($nsisPath) {
-            $env:PATH = "$(Split-Path -Parent $nsisPath);$env:PATH"
+        $makensisPath = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($makensisPath) {
+            $env:PATH = "$(Split-Path -Parent $makensisPath);$env:PATH"
         } else {
             throw "NSIS was not found on PATH or in the standard install locations. Install NSIS and re-run this script, or use -Generator ZIP for a portable archive."
         }
@@ -47,7 +50,22 @@ if (!(Test-Path $cpackConfig)) {
 
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
-& cpack --config $cpackConfig -G $Generator -B $outputPath
+if ($Generator -eq "NSIS") {
+    $previousMakensisPath = $env:ND2_VIEWER_MAKENSIS_EXE
+    $env:ND2_VIEWER_MAKENSIS_EXE = $makensisPath
+}
+
+try {
+    & cpack --config $cpackConfig -G $Generator -B $outputPath
+} finally {
+    if ($Generator -eq "NSIS") {
+        if ($null -eq $previousMakensisPath) {
+            Remove-Item Env:ND2_VIEWER_MAKENSIS_EXE -ErrorAction SilentlyContinue
+        } else {
+            $env:ND2_VIEWER_MAKENSIS_EXE = $previousMakensisPath
+        }
+    }
+}
 
 if ($LASTEXITCODE -ne 0) {
     throw "Packaging failed with exit code $LASTEXITCODE."

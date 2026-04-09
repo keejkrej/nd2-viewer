@@ -210,6 +210,15 @@ else()
   )
 endif()
 
+if(WIN32)
+  add_executable(cpack-nsis-wrapper
+    scripts/cpack-nsis-wrapper.cpp
+  )
+  set_target_properties(cpack-nsis-wrapper PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools"
+  )
+endif()
+
 if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
   file(GLOB ND2_SDK_DLLS "${ND2SDK_ROOT}/bin/*.dll")
   foreach(nd2_sdk_dll IN LISTS ND2_SDK_DLLS)
@@ -337,11 +346,18 @@ set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 
 if(WIN32)
   set(CPACK_GENERATOR "NSIS")
+  set(CPACK_NSIS_INSTALL_ROOT "$LOCALAPPDATA\\\\Programs")
   set(CPACK_NSIS_DISPLAY_NAME "nd2-viewer")
   set(CPACK_NSIS_PACKAGE_NAME "nd2-viewer")
   set(CPACK_NSIS_INSTALLED_ICON_NAME "nd2-viewer.exe")
   set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
   set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
+  # CPack's stock NSIS template hard-codes admin/UAC behavior, so route
+  # makensis through a small native wrapper that patches the generated script first.
+  set(CPACK_NSIS_EXECUTABLE "${CMAKE_BINARY_DIR}/tools/cpack-nsis-wrapper.exe")
+  set(CPACK_NSIS_EXECUTABLE_PRE_ARGUMENTS
+    "--powershell-script" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/invoke-makensis-wrapper.ps1"
+  )
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
   set(CPACK_NSIS_MODIFY_PATH OFF)

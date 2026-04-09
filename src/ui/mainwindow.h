@@ -98,7 +98,7 @@ private:
     void exportMovieSelection(ExportScope scope);
     void rebuildNavigatorControls();
     void commitLoopSliderValue(int loopIndex);
-    void toggleTimePlayback(bool enabled);
+    void handleTimePlaybackButton();
     void startTimePlayback();
     void stopTimePlayback();
     void advanceTimePlayback();
@@ -155,6 +155,7 @@ private:
     bool movieExportInProgress_ = false;
     bool timePlaybackActive_ = false;
     bool timePlaybackAwaitingFrame_ = false;
+    int timePlaybackStep_ = 1;
     int timePlaybackLoopIndex_ = -1;
     int timePlaybackNextFrameIndex_ = 0;
     QVector<int> timePlaybackTimeValues_;

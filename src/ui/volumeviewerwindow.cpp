@@ -1,6 +1,5 @@
 #include "ui/volumeviewerwindow.h"
 
-#include "ui/autocontrasttuningdialog.h"
 #include "ui/channelcontrolswidget.h"
 #include "ui/volumeviewport3d.h"
 #include "core/volumeutils.h"
@@ -88,6 +87,7 @@ void VolumeViewerWindow::buildUi()
     sidebarLayout->setSpacing(8);
     auto *channelsTitle = new QLabel(tr("<b>3D Channels</b>"), sidebar);
     channelControlsWidget_ = new ChannelControlsWidget(sidebar);
+    channelControlsWidget_->setAutoContrastControlsVisible(false);
     channelControlsWidget_->setEnabled(false);
     sidebarLayout->addWidget(channelsTitle);
     sidebarLayout->addWidget(channelControlsWidget_, 1);
@@ -121,15 +121,6 @@ void VolumeViewerWindow::buildUi()
                 channelSettings_[channelIndex] = settings;
                 viewport_->setChannelSettings(channelSettings_);
             });
-    connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastRequested, this, [this](int channelIndex) {
-        autoContrastChannel(channelIndex);
-    });
-    connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastAllRequested, this, [this]() {
-        autoContrastAllChannels();
-    });
-    connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested, this, [this](int channelIndex) {
-        openAutoContrastTuningDialog(channelIndex);
-    });
     connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &VolumeViewerWindow::handleVolumeLoadFinished);
 }
 
@@ -153,7 +144,6 @@ void VolumeViewerWindow::handleVolumeLoadFinished()
     }
 
     volume_ = result.volume;
-    analyses_ = result.analyses;
     statusLabel_->setText(tr("Loaded 3D volume %1 × %2 × %3")
                               .arg(volume_.width)
                               .arg(volume_.height)
@@ -183,69 +173,6 @@ void VolumeViewerWindow::setLoadedChannelSettings(const QVector<ChannelRenderSet
 {
     channelSettings_ = settings;
     channelControlsWidget_->setChannels(info_.channels, channelSettings_);
-    viewport_->setChannelSettings(channelSettings_);
-}
-
-void VolumeViewerWindow::autoContrastChannel(int channelIndex)
-{
-    if (channelIndex < 0 || channelIndex >= channelSettings_.size() || channelIndex >= analyses_.size()) {
-        return;
-    }
-
-    if (!FrameRenderer::applyAutoContrastToChannel(analyses_.at(channelIndex), channelSettings_[channelIndex])) {
-        return;
-    }
-
-    channelControlsWidget_->updateSettings(channelSettings_);
-    viewport_->setChannelSettings(channelSettings_);
-}
-
-void VolumeViewerWindow::autoContrastAllChannels()
-{
-    bool changed = false;
-    for (int index = 0; index < channelSettings_.size() && index < analyses_.size(); ++index) {
-        changed = FrameRenderer::applyAutoContrastToChannel(analyses_.at(index), channelSettings_[index]) || changed;
-    }
-
-    if (!changed) {
-        return;
-    }
-
-    channelControlsWidget_->updateSettings(channelSettings_);
-    viewport_->setChannelSettings(channelSettings_);
-}
-
-void VolumeViewerWindow::openAutoContrastTuningDialog(int channelIndex)
-{
-    if (channelIndex < 0 || channelIndex >= channelSettings_.size() || channelIndex >= analyses_.size()) {
-        return;
-    }
-
-    const QString channelName = (channelIndex < info_.channels.size() && !info_.channels.at(channelIndex).name.isEmpty())
-                                    ? info_.channels.at(channelIndex).name
-                                    : tr("Channel %1").arg(channelIndex + 1);
-    const ChannelRenderSettings originalSettings = channelSettings_.at(channelIndex);
-
-    AutoContrastTuningDialog dialog(channelName,
-                                    tr("Adjust the min and max percentiles for this channel. The histogram uses a sampled snapshot of the current 3D volume."),
-                                    analyses_.at(channelIndex),
-                                    originalSettings,
-                                    this);
-    dialog.setPreviewCallback([this, channelIndex](const ChannelRenderSettings &previewSettings) {
-        channelSettings_[channelIndex] = previewSettings;
-        channelControlsWidget_->updateSettings(channelSettings_);
-        viewport_->setChannelSettings(channelSettings_);
-    });
-
-    if (dialog.exec() == QDialog::Accepted) {
-        channelSettings_[channelIndex] = dialog.currentSettings();
-        channelControlsWidget_->updateSettings(channelSettings_);
-        viewport_->setChannelSettings(channelSettings_);
-        return;
-    }
-
-    channelSettings_[channelIndex] = originalSettings;
-    channelControlsWidget_->updateSettings(channelSettings_);
     viewport_->setChannelSettings(channelSettings_);
 }
 

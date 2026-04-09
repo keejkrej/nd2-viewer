@@ -19,6 +19,7 @@
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -43,6 +44,7 @@
 #include <QStatusBar>
 #include <QStandardPaths>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -1370,6 +1372,15 @@ void MainWindow::rebuildNavigatorControls()
 
         widgets.label = new QLabel(QStringLiteral("%1").arg(loop.label), widgets.row);
         widgets.label->setMinimumWidth(84);
+        QToolButton *playButton = nullptr;
+        if (index == timeLoopIndex) {
+            playButton = new QToolButton(widgets.row);
+            playButton->setAutoRaise(true);
+            playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            playButton->setToolTip(tr("Choose a playback step and start the time loop."));
+            timePlaybackButton_ = playButton;
+            timePlaybackLoopIndex_ = index;
+        }
         widgets.slider = new QSlider(Qt::Horizontal, widgets.row);
         widgets.slider->setRange(0, qMax(loop.size - 1, 0));
         widgets.slider->setTracking(false);
@@ -1378,22 +1389,13 @@ void MainWindow::rebuildNavigatorControls()
         widgets.spinBox->setRange(0, qMax(loop.size - 1, 0));
         widgets.details = new QLabel(QStringLiteral("%1 · %2 steps").arg(loop.type, QString::number(loop.size)), widgets.row);
         widgets.details->setMinimumWidth(120);
-        QToolButton *playButton = nullptr;
-        if (index == timeLoopIndex) {
-            playButton = new QToolButton(widgets.row);
-            playButton->setCheckable(true);
-            playButton->setText(tr("Play"));
-            playButton->setToolTip(tr("Play or pause time loop playback."));
-            timePlaybackButton_ = playButton;
-            timePlaybackLoopIndex_ = index;
-        }
 
         rowLayout->addWidget(widgets.label);
-        rowLayout->addWidget(widgets.slider, 1);
-        rowLayout->addWidget(widgets.spinBox);
         if (playButton) {
             rowLayout->addWidget(playButton);
         }
+        rowLayout->addWidget(widgets.slider, 1);
+        rowLayout->addWidget(widgets.spinBox);
         rowLayout->addWidget(widgets.details);
 
         navigatorRowsLayout_->addWidget(widgets.row);
@@ -1423,7 +1425,7 @@ void MainWindow::rebuildNavigatorControls()
         });
 
         if (playButton) {
-            connect(playButton, &QToolButton::toggled, this, &MainWindow::toggleTimePlayback);
+            connect(playButton, &QToolButton::clicked, this, &MainWindow::handleTimePlaybackButton);
         }
     }
 
@@ -1440,13 +1442,38 @@ void MainWindow::commitLoopSliderValue(int loopIndex)
     controller_.setCoordinateValue(loopIndex, loopWidgets.slider->sliderPosition());
 }
 
-void MainWindow::toggleTimePlayback(bool enabled)
+void MainWindow::handleTimePlaybackButton()
 {
-    if (enabled) {
-        startTimePlayback();
-    } else {
+    if (timePlaybackActive_) {
         stopTimePlayback();
+        return;
     }
+
+    if (movieExportInProgress_ || !controller_.hasDocument() || timePlaybackLoopIndex_ < 0) {
+        return;
+    }
+
+    const DocumentInfo &info = controller_.documentInfo();
+    if (timePlaybackLoopIndex_ >= info.loops.size()) {
+        return;
+    }
+
+    const int maximumStep = qMax(info.loops.at(timePlaybackLoopIndex_).size, 1);
+    bool accepted = false;
+    const int selectedStep = QInputDialog::getInt(this,
+                                                  tr("Time Playback"),
+                                                  tr("Speed up / frame step"),
+                                                  qBound(1, timePlaybackStep_, maximumStep),
+                                                  1,
+                                                  maximumStep,
+                                                  1,
+                                                  &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    timePlaybackStep_ = selectedStep;
+    startTimePlayback();
 }
 
 void MainWindow::startTimePlayback()
@@ -1463,7 +1490,7 @@ void MainWindow::startTimePlayback()
     }
 
     const int lastFrame = info.loops.at(timePlaybackLoopIndex_).size - 1;
-    timePlaybackTimeValues_ = buildTimeFrameValues(0, lastFrame, 1);
+    timePlaybackTimeValues_ = buildTimeFrameValues(0, lastFrame, qMax(timePlaybackStep_, 1));
     if (timePlaybackTimeValues_.isEmpty()) {
         stopTimePlayback();
         return;
@@ -1486,11 +1513,10 @@ void MainWindow::startTimePlayback()
     timePlaybackAwaitingFrame_ = false;
     timePlaybackActive_ = true;
     if (timePlaybackButton_) {
-        const QSignalBlocker blocker(timePlaybackButton_);
-        timePlaybackButton_->setChecked(true);
-        timePlaybackButton_->setText(tr("Pause"));
+        timePlaybackButton_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+        timePlaybackButton_->setToolTip(tr("Stop time loop playback."));
     }
-    statusBar()->showMessage(tr("Playing time loop…"));
+    statusBar()->showMessage(tr("Playing time loop with step %1…").arg(timePlaybackStep_));
     timePlaybackTimer_->start();
 }
 
@@ -1506,9 +1532,8 @@ void MainWindow::stopTimePlayback()
         timePlaybackTimer_->stop();
     }
     if (timePlaybackButton_) {
-        const QSignalBlocker blocker(timePlaybackButton_);
-        timePlaybackButton_->setChecked(false);
-        timePlaybackButton_->setText(tr("Play"));
+        timePlaybackButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+        timePlaybackButton_->setToolTip(tr("Choose a playback step and start the time loop."));
     }
 
     if (wasActive) {

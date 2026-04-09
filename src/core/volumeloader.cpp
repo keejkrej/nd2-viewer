@@ -172,11 +172,9 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
         result.volume.fixedCoordinates.values.resize(info.loops.size());
     }
     result.channelSettings = VolumeUtils::defaultVolumeChannelSettings(info, seedChannelSettings, displayChannelCount);
-    [[maybe_unused]] const bool autoContrastChanged =
-        VolumeUtils::applyAutoContrast(result.volume, result.channelSettings, &result.analyses);
     for (int channelIndex = 0; channelIndex < result.channelSettings.size(); ++channelIndex) {
         const ChannelRenderSettings &settings = result.channelSettings.at(channelIndex);
-        qInfo("3D auto contrast channel=%d enabled=%d low=%.6f high=%.6f auto=%d",
+        qInfo("3D inherited channel settings channel=%d enabled=%d low=%.6f high=%.6f auto=%d",
               channelIndex,
               settings.enabled ? 1 : 0,
               settings.low,

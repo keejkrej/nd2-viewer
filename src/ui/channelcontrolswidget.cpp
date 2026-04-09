@@ -172,6 +172,13 @@ void ChannelRowWidget::setChannel(const ChannelInfo &channel, const ChannelRende
     updating_ = false;
 }
 
+void ChannelRowWidget::setAutoContrastControlsVisible(bool visible)
+{
+    autoCheck_->setVisible(visible);
+    tuneButton_->setVisible(visible);
+    autoButton_->setVisible(visible);
+}
+
 ChannelRenderSettings ChannelRowWidget::currentSettings() const
 {
     ChannelRenderSettings settings = settings_;
@@ -230,6 +237,7 @@ void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, co
         const ChannelInfo channel = index < channels.size() ? channels.at(index)
                                                             : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
         row->setChannel(channel, settings.at(index));
+        row->setAutoContrastControlsVisible(autoContrastControlsVisible_);
         rowsLayout_->insertWidget(rowsLayout_->count() - 1, row);
         rows_.push_back(row);
 
@@ -242,6 +250,15 @@ void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, co
         connect(row, &ChannelRowWidget::autoContrastTuningRequested, this, [this, index]() {
             emit autoContrastTuningRequested(index);
         });
+    }
+}
+
+void ChannelControlsWidget::setAutoContrastControlsVisible(bool visible)
+{
+    autoContrastControlsVisible_ = visible;
+    autoAllButton_->setVisible(visible);
+    for (ChannelRowWidget *row : std::as_const(rows_)) {
+        row->setAutoContrastControlsVisible(visible);
     }
 }
 

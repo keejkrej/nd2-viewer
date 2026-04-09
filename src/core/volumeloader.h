@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/documenttypes.h"
-#include "core/framerenderer.h"
 
 #include <QString>
 #include <QVector>
@@ -11,7 +10,6 @@ struct VolumeLoadResult
     bool success = false;
     RawVolume volume;
     QVector<ChannelRenderSettings> channelSettings;
-    QVector<ChannelAutoContrastAnalysis> analyses;
     QString error;
 };
 

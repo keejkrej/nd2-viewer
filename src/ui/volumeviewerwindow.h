@@ -29,9 +29,6 @@ private:
     void startLoad();
     void handleVolumeLoadFinished();
     void setLoadedChannelSettings(const QVector<ChannelRenderSettings> &settings);
-    void autoContrastChannel(int channelIndex);
-    void autoContrastAllChannels();
-    void openAutoContrastTuningDialog(int channelIndex);
     [[nodiscard]] QString coordinateSummary() const;
 
     QString path_;
@@ -40,7 +37,6 @@ private:
     QVector<ChannelRenderSettings> seedChannelSettings_;
     RawVolume volume_;
     QVector<ChannelRenderSettings> channelSettings_;
-    QVector<ChannelAutoContrastAnalysis> analyses_;
     VolumeViewport3D *viewport_ = nullptr;
     ChannelControlsWidget *channelControlsWidget_ = nullptr;
     QLabel *statusLabel_ = nullptr;

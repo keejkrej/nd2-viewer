@@ -18,6 +18,7 @@ public:
     explicit ChannelRowWidget(QWidget *parent = nullptr);
 
     void setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings);
+    void setAutoContrastControlsVisible(bool visible);
 
 signals:
     void settingsEdited(const ChannelRenderSettings &settings);
@@ -49,6 +50,7 @@ public:
     explicit ChannelControlsWidget(QWidget *parent = nullptr);
 
     void setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings);
+    void setAutoContrastControlsVisible(bool visible);
     void updateSettings(const QVector<ChannelRenderSettings> &settings);
 
 signals:
@@ -65,4 +67,5 @@ private:
     QPushButton *autoAllButton_ = nullptr;
     QVector<ChannelRowWidget *> rows_;
     QVector<ChannelInfo> channels_;
+    bool autoContrastControlsVisible_ = true;
 };

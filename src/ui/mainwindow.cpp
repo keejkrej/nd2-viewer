@@ -2,10 +2,12 @@
 
 #include "ui/channelcontrolswidget.h"
 #include "ui/imageviewport.h"
-#include "ui/volumeviewerwindow.h"
+#include "ui/volumeviewport3d.h"
+#include "core/framerenderer.h"
 #include "core/volumeutils.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialogButtonBox>
@@ -40,6 +42,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStandardPaths>
@@ -55,11 +58,14 @@
 #include <QVideoFrameFormat>
 #include <QVideoFrameInput>
 
+#include <QtConcurrent>
+
 #include <tiffio.h>
 
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <optional>
 
 namespace
 {
@@ -720,6 +726,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(&controller_, &DocumentController::documentChanged, this, &MainWindow::updateDocumentUi);
     connect(&controller_, &DocumentController::coordinateStateChanged, this, &MainWindow::updateCoordinateUi);
+    connect(&controller_, &DocumentController::coordinateStateChanged, this, &MainWindow::maybeReloadVolumeForNonZCoordinateChange);
     connect(&controller_, &DocumentController::channelSettingsChanged, this, &MainWindow::updateChannelUi);
     connect(&controller_, &DocumentController::frameReady, this, &MainWindow::updateFrameUi);
     connect(&controller_, &DocumentController::metadataChanged, this, &MainWindow::updateMetadataUi);
@@ -737,11 +744,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
             &controller_, &DocumentController::setChannelSettings);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastRequested,
-            &controller_, &DocumentController::autoContrastChannel);
+            this, &MainWindow::autoContrastChannelForActiveView);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested,
             this, &MainWindow::openAutoContrastTuningDialog);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastAllRequested,
-            &controller_, &DocumentController::autoContrastAllChannels);
+            this, &MainWindow::autoContrastAllForActiveView);
+
+    connect(volumeViewCheck_, &QCheckBox::toggled, this, &MainWindow::onVolumeViewCheckToggled);
+    connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &MainWindow::handleVolumeLoadFinished);
 
     updateDocumentUi();
 }
@@ -808,8 +818,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    if (volumeViewerWindow_) {
-        volumeViewerWindow_->close();
+    if (volumeWatcher_.isRunning()) {
+        volumeWatcher_.waitForFinished();
     }
 
     QMainWindow::closeEvent(event);
@@ -854,34 +864,9 @@ void MainWindow::exportRoiMovieAs()
     exportMovieSelection(ExportScope::Roi);
 }
 
-void MainWindow::open3DView()
+void MainWindow::onVolumeViewCheckToggled(bool checked)
 {
-    if (!controller_.hasDocument() || !hasUsableZStack()) {
-        return;
-    }
-
-    if (volumeViewerWindow_) {
-        volumeViewerWindow_->show();
-        volumeViewerWindow_->raise();
-        volumeViewerWindow_->activateWindow();
-        return;
-    }
-
-    volumeViewerWindow_ = new VolumeViewerWindow(controller_.currentPath(),
-                                                 controller_.documentInfo(),
-                                                 controller_.coordinateState(),
-                                                 controller_.channelSettings());
-    connect(volumeViewerWindow_, &QObject::destroyed, this, [this]() {
-        volumeViewerWindow_ = nullptr;
-        setEnabled(true);
-        activateWindow();
-        raise();
-    });
-
-    volumeViewerWindow_->show();
-    volumeViewerWindow_->raise();
-    volumeViewerWindow_->activateWindow();
-    setEnabled(false);
+    applyVolumeViewMode(checked);
 }
 
 void MainWindow::openAutoContrastTuningDialog(int channelIndex)
@@ -891,17 +876,27 @@ void MainWindow::openAutoContrastTuningDialog(int channelIndex)
         return;
     }
 
-    const RawFrame &rawFrame = controller_.currentRawFrame();
-    if (!rawFrame.isValid()) {
-        statusBar()->showMessage(tr("Load a frame before tuning live auto contrast."), 5000);
-        return;
+    ChannelAutoContrastAnalysis analysis;
+    if (isVolumeViewActive()) {
+        if (!cachedVolume_.isValid()) {
+            statusBar()->showMessage(tr("Load the 3D volume before tuning volume auto contrast."), 5000);
+            return;
+        }
+        analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
+    } else {
+        const RawFrame &rawFrame = controller_.currentRawFrame();
+        if (!rawFrame.isValid()) {
+            statusBar()->showMessage(tr("Load a frame before tuning live auto contrast."), 5000);
+            return;
+        }
+        analysis = FrameRenderer::analyzeChannel(rawFrame, channelIndex);
     }
 
-    const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(rawFrame, channelIndex);
     if (!analysis.isValid()) {
         QMessageBox::warning(this,
                              tr("Live Auto"),
-                             tr("A histogram could not be prepared for the current frame."));
+                             isVolumeViewActive() ? tr("A histogram could not be prepared for the current 3D volume.")
+                                                  : tr("A histogram could not be prepared for the current frame."));
         return;
     }
 
@@ -1100,19 +1095,36 @@ void MainWindow::exportMovieSelection(ExportScope scope)
 
 void MainWindow::updateDocumentUi()
 {
+    cachedVolume_ = {};
+    volumeLoadGeneration_ = 0;
+    documentZLoopIndex_ = VolumeUtils::findZLoopIndex(controller_.documentInfo());
+
     imageViewport_->clearRoi();
     imageViewport_->setImage(controller_.renderedFrame().image);
     rebuildNavigatorControls();
+
+    const bool hasZ = hasUsableZStack();
+    {
+        QSignalBlocker bv(volumeViewCheck_);
+        volumeViewCheck_->setChecked(false);
+        viewerStack_->setCurrentIndex(0);
+    }
+
+    volumeViewCheck_->setVisible(hasZ);
     channelControlsWidget_->setChannels(controller_.documentInfo().channels, controller_.channelSettings());
+    channelControlsWidget_->setLiveAutoInteractive(!isVolumeViewActive());
     updateCoordinateUi();
     updateChannelUi();
     updateStaticMetadataUi();
     updateFrameMetadataUi();
     updateWindowTitle();
     updateInfoLabel();
-    if (threeDViewAction_) {
-        threeDViewAction_->setEnabled(hasUsableZStack());
-    }
+    applyZLoopNavigatorLock();
+
+    volumeStatusLabel_->setText(hasZ ? tr("Open 3D view to load the z-stack.") : QString());
+    volumeCoordsLabel_->clear();
+    volumeFitButton_->setEnabled(false);
+    volumeResetButton_->setEnabled(false);
 }
 
 void MainWindow::updateCoordinateUi()
@@ -1125,11 +1137,13 @@ void MainWindow::updateCoordinateUi()
         loopControls_[index].spinBox->setValue(state.values.at(index));
     }
     updateInfoLabel();
+    applyZLoopNavigatorLock();
 }
 
 void MainWindow::updateChannelUi()
 {
     channelControlsWidget_->updateSettings(controller_.channelSettings());
+    syncVolumeViewportChannelSettings();
 }
 
 void MainWindow::updateFrameUi()
@@ -1245,9 +1259,6 @@ void MainWindow::buildMenus()
                                                    : ImageViewport::InteractionMode::Pan);
     });
 
-    threeDViewAction_ = toolsMenu->addAction(tr("3D View"));
-    threeDViewAction_->setEnabled(false);
-    connect(threeDViewAction_, &QAction::triggered, this, &MainWindow::open3DView);
 }
 
 void MainWindow::buildCentralUi()
@@ -1283,10 +1294,55 @@ void MainWindow::buildCentralUi()
     navigatorScrollArea->setWidget(navigatorContainer_);
     navigationLayout->addWidget(navigatorScrollArea);
 
+    auto *viewModeRow = new QWidget(viewerPane);
+    auto *viewModeLayout = new QHBoxLayout(viewModeRow);
+    viewModeLayout->setContentsMargins(0, 0, 0, 0);
+    volumeViewCheck_ = new QCheckBox(tr("3D view"), viewModeRow);
+    volumeViewCheck_->setVisible(false);
+    viewModeLayout->addWidget(volumeViewCheck_);
+    viewModeLayout->addStretch(1);
+
     imageViewport_ = new ImageViewport(viewerPane);
 
+    volumePage_ = new QWidget(viewerPane);
+    auto *volumeOuterLayout = new QVBoxLayout(volumePage_);
+    volumeOuterLayout->setContentsMargins(0, 0, 0, 0);
+    volumeOuterLayout->setSpacing(8);
+
+    auto *volumeHeader = new QWidget(volumePage_);
+    auto *volumeHeaderLayout = new QHBoxLayout(volumeHeader);
+    volumeHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    volumeHeaderLayout->setSpacing(8);
+
+    volumeStatusLabel_ = new QLabel(tr("Loading 3D volume…"), volumeHeader);
+    volumeCoordsLabel_ = new QLabel(volumeHeader);
+    volumeCoordsLabel_->setWordWrap(true);
+    volumeFitButton_ = new QPushButton(tr("Fit To Volume"), volumeHeader);
+    volumeFitButton_->setEnabled(false);
+    volumeFitButton_->setToolTip(tr("Keep the current angle and reframe the visible volume to fill the viewport."));
+    volumeResetButton_ = new QPushButton(tr("Reset View"), volumeHeader);
+    volumeResetButton_->setEnabled(false);
+    volumeResetButton_->setToolTip(tr("Restore the default camera angle and refit the volume."));
+
+    volumeHeaderLayout->addWidget(volumeStatusLabel_, 1);
+    volumeHeaderLayout->addWidget(volumeCoordsLabel_, 2);
+    volumeHeaderLayout->addWidget(volumeFitButton_);
+    volumeHeaderLayout->addWidget(volumeResetButton_);
+
+    volumeViewport_ = new VolumeViewport3D(volumePage_);
+    volumeOuterLayout->addWidget(volumeHeader);
+    volumeOuterLayout->addWidget(volumeViewport_, 1);
+
+    connect(volumeFitButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::fitToVolume);
+    connect(volumeResetButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::resetView);
+
+    viewerStack_ = new QStackedWidget(viewerPane);
+    viewerStack_->addWidget(imageViewport_);
+    viewerStack_->addWidget(volumePage_);
+
     viewerLayout->addWidget(navigationSection, 0);
-    viewerLayout->addWidget(imageViewport_, 1);
+    viewerLayout->addWidget(viewModeRow, 0);
+    viewerLayout->addWidget(viewerStack_, 1);
 
     auto *sidebarPane = new QWidget(mainSplitter);
     sidebarPane->setMinimumWidth(320);
@@ -1430,6 +1486,8 @@ void MainWindow::rebuildNavigatorControls()
     }
 
     navigatorRowsLayout_->addStretch(1);
+
+    applyZLoopNavigatorLock();
 }
 
 void MainWindow::commitLoopSliderValue(int loopIndex)
@@ -1963,9 +2021,233 @@ int MainWindow::findTimeLoopIndex() const
     return -1;
 }
 
+bool MainWindow::isVolumeViewActive() const
+{
+    return viewerStack_ && viewerStack_->currentIndex() == 1;
+}
+
 bool MainWindow::hasUsableZStack() const
 {
     return controller_.hasDocument() && VolumeUtils::findZLoopIndex(controller_.documentInfo()) >= 0;
+}
+
+QString MainWindow::volumeFixedCoordinateSummary() const
+{
+    const DocumentInfo &info = controller_.documentInfo();
+    const FrameCoordinateState &coordinates = controller_.coordinateState();
+    QStringList parts;
+    for (int index = 0; index < info.loops.size() && index < coordinates.values.size(); ++index) {
+        if (index == documentZLoopIndex_) {
+            continue;
+        }
+
+        parts << QStringLiteral("%1=%2").arg(info.loops.at(index).label).arg(coordinates.values.at(index));
+    }
+
+    return parts.isEmpty() ? tr("3D view uses the full z-stack for the current file.")
+                           : tr("Fixed coordinates: %1").arg(parts.join(QStringLiteral(", ")));
+}
+
+bool MainWindow::volumeMatchesCurrentFixedCoordinates() const
+{
+    if (!cachedVolume_.isValid()) {
+        return false;
+    }
+
+    const int z = documentZLoopIndex_;
+    if (z < 0) {
+        return false;
+    }
+
+    const QVector<int> &current = controller_.coordinateState().values;
+    const QVector<int> &fixed = cachedVolume_.fixedCoordinates.values;
+    const int loopCount = controller_.documentInfo().loops.size();
+
+    for (int i = 0; i < loopCount; ++i) {
+        if (i == z) {
+            continue;
+        }
+
+        const int c = i < current.size() ? current.at(i) : 0;
+        const int f = i < fixed.size() ? fixed.at(i) : 0;
+        if (c != f) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void MainWindow::applyZLoopNavigatorLock()
+{
+    const int z = documentZLoopIndex_;
+    if (z < 0 || z >= loopControls_.size()) {
+        return;
+    }
+
+    const bool lock = isVolumeViewActive();
+    loopControls_[z].slider->setEnabled(!lock);
+    loopControls_[z].spinBox->setEnabled(!lock);
+}
+
+void MainWindow::syncVolumeViewportChannelSettings()
+{
+    if (!isVolumeViewActive() || !cachedVolume_.isValid() || !volumeViewport_) {
+        return;
+    }
+
+    volumeViewport_->setChannelSettings(controller_.channelSettings());
+}
+
+void MainWindow::applyVolumeViewMode(bool volumeViewActive)
+{
+    if (!controller_.hasDocument() || !hasUsableZStack()) {
+        return;
+    }
+
+    viewerStack_->setCurrentIndex(volumeViewActive ? 1 : 0);
+    channelControlsWidget_->setLiveAutoInteractive(!volumeViewActive);
+    applyZLoopNavigatorLock();
+
+    if (volumeViewActive) {
+        if (volumeMatchesCurrentFixedCoordinates() && cachedVolume_.isValid()) {
+            volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
+            volumeStatusLabel_->setText(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()));
+            volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
+            volumeFitButton_->setEnabled(true);
+            volumeResetButton_->setEnabled(true);
+            if (!volumeViewport_->lastError().isEmpty()) {
+                QMessageBox::warning(this, tr("3D View"), volumeViewport_->lastError());
+            }
+        } else {
+            startVolumeLoad();
+        }
+    }
+}
+
+void MainWindow::startVolumeLoad()
+{
+    if (!controller_.hasDocument() || !hasUsableZStack() || !isVolumeViewActive()) {
+        return;
+    }
+
+    ++volumeLoadGeneration_;
+    const int generation = volumeLoadGeneration_;
+
+    volumeStatusLabel_->setText(tr("Loading 3D volume…"));
+    volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
+    volumeFitButton_->setEnabled(false);
+    volumeResetButton_->setEnabled(false);
+
+    const QString path = controller_.currentPath();
+    const DocumentInfo info = controller_.documentInfo();
+    const FrameCoordinateState coords = controller_.coordinateState();
+    const QVector<ChannelRenderSettings> seed = controller_.channelSettings();
+
+    volumeWatcher_.setFuture(QtConcurrent::run([path, info, coords, seed, generation]() {
+        VolumeLoadResult result = VolumeLoader::load(path, info, coords, seed);
+        result.loadRequestId = generation;
+        return result;
+    }));
+}
+
+void MainWindow::handleVolumeLoadFinished()
+{
+    const VolumeLoadResult result = volumeWatcher_.result();
+    if (result.loadRequestId != volumeLoadGeneration_) {
+        return;
+    }
+
+    if (!isVolumeViewActive()) {
+        if (result.success && result.volume.isValid()) {
+            cachedVolume_ = result.volume;
+        }
+        return;
+    }
+
+    if (!result.success || !result.volume.isValid()) {
+        qWarning("3D volume load failed: %s", qPrintable(result.error));
+        QMessageBox::warning(this,
+                             tr("3D View"),
+                             result.error.isEmpty() ? tr("The 3D volume could not be prepared.") : result.error);
+        QSignalBlocker b1(volumeViewCheck_);
+        volumeViewCheck_->setChecked(false);
+        viewerStack_->setCurrentIndex(0);
+        channelControlsWidget_->setLiveAutoInteractive(true);
+        applyZLoopNavigatorLock();
+        cachedVolume_ = {};
+        volumeStatusLabel_->setText(tr("Open 3D view to load the z-stack."));
+        return;
+    }
+
+    cachedVolume_ = result.volume;
+    volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
+    volumeStatusLabel_->setText(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()));
+    volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
+    volumeFitButton_->setEnabled(true);
+    volumeResetButton_->setEnabled(true);
+    if (!volumeViewport_->lastError().isEmpty()) {
+        volumeStatusLabel_->setText(tr("3D renderer error: %1").arg(volumeViewport_->lastError()));
+        QMessageBox::warning(this, tr("3D View"), volumeViewport_->lastError());
+    }
+}
+
+void MainWindow::maybeReloadVolumeForNonZCoordinateChange()
+{
+    if (!isVolumeViewActive()) {
+        return;
+    }
+
+    if (!cachedVolume_.isValid() || !volumeMatchesCurrentFixedCoordinates()) {
+        startVolumeLoad();
+    }
+}
+
+void MainWindow::autoContrastChannelForActiveView(int channelIndex)
+{
+    if (isVolumeViewActive() && cachedVolume_.isValid()) {
+        const QVector<ChannelRenderSettings> settings = controller_.channelSettings();
+        if (channelIndex < 0 || channelIndex >= settings.size()) {
+            return;
+        }
+
+        ChannelRenderSettings channelSettings = settings.at(channelIndex);
+        const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
+        if (!FrameRenderer::applyAutoContrastToChannel(analysis, channelSettings)) {
+            return;
+        }
+
+        controller_.setChannelSettings(channelIndex, channelSettings);
+        syncVolumeViewportChannelSettings();
+        return;
+    }
+
+    controller_.autoContrastChannel(channelIndex);
+}
+
+void MainWindow::autoContrastAllForActiveView()
+{
+    if (isVolumeViewActive() && cachedVolume_.isValid()) {
+        const QVector<ChannelRenderSettings> settings = controller_.channelSettings();
+        bool anyChanged = false;
+        for (int channelIndex = 0; channelIndex < settings.size(); ++channelIndex) {
+            ChannelRenderSettings channelSettings = settings.at(channelIndex);
+            const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
+            const bool channelChanged = FrameRenderer::applyAutoContrastToChannel(analysis, channelSettings);
+
+            if (channelChanged) {
+                controller_.setChannelSettings(channelIndex, channelSettings);
+                anyChanged = true;
+            }
+        }
+
+        if (anyChanged) {
+            syncVolumeViewportChannelSettings();
+        }
+        return;
+    }
+
+    controller_.autoContrastAllChannels();
 }
 
 void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
@@ -2235,8 +2517,8 @@ void MainWindow::setMovieExportUiState(bool active)
     if (timePlaybackButton_) {
         timePlaybackButton_->setEnabled(!active);
     }
-    if (threeDViewAction_) {
-        threeDViewAction_->setEnabled(!active && hasUsableZStack());
+    if (volumeViewCheck_) {
+        volumeViewCheck_->setEnabled(!active && hasUsableZStack());
     }
 }
 

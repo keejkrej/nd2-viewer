@@ -74,7 +74,7 @@ QVector<ChannelRenderSettings> VolumeUtils::defaultVolumeChannelSettings(const D
             channel.color = defaultColorForIndex(settings.size());
             channel.low = 0.0;
             channel.high = defaultHigh > 0.0 ? defaultHigh : 1.0;
-            channel.autoContrast = true;
+            channel.autoContrast = false;
             settings.push_back(channel);
         }
     }

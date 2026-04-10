@@ -8,6 +8,7 @@ build_dir="build-macos-release"
 output_dir="dist"
 generator="DragNDrop"
 qt6_dir="${Qt6_DIR:-/opt/homebrew/lib/cmake/Qt6}"
+vtk_dir="${VTK_DIR:-}"
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
@@ -20,6 +21,7 @@ Options:
   --output-dir <path>     Package output directory relative to the repo root. Default: dist
   --generator <name>      CPack generator. Supported: DragNDrop. Default: DragNDrop
   --qt6-dir <path>        Path to Qt6Config.cmake. Default: /opt/homebrew/lib/cmake/Qt6
+  --vtk-dir <path>        Path to VTKConfig.cmake. Default: auto-detect in CMake
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --qt6-dir)
       qt6_dir="$2"
+      shift 2
+      ;;
+    --vtk-dir)
+      vtk_dir="$2"
       shift 2
       ;;
     --nd2sdk-root)
@@ -78,14 +84,23 @@ output_path="${repo_root}/${output_dir}"
 cpack_config="${build_path}/CPackConfig.cmake"
 app_bundle="${build_path}/bin/nd2-viewer.app"
 
-CMAKE_BUILD_TYPE="${configuration}" \
-BUILD_DIR="${build_dir}" \
-Qt6_DIR="${qt6_dir}" \
-ND2SDK_ROOT="${nd2sdk_root}" \
-"${repo_root}/scripts/build-macos.sh" \
-  --configuration "${configuration}" \
-  --qt6-dir "${qt6_dir}" \
+build_args=(
+  --configuration "${configuration}"
+  --qt6-dir "${qt6_dir}"
   --nd2sdk-root "${nd2sdk_root}"
+)
+
+if [[ -n "${vtk_dir}" ]]; then
+  build_args+=(--vtk-dir "${vtk_dir}")
+fi
+
+export CMAKE_BUILD_TYPE="${configuration}"
+export BUILD_DIR="${build_dir}"
+export Qt6_DIR="${qt6_dir}"
+export VTK_DIR="${vtk_dir}"
+export ND2SDK_ROOT="${nd2sdk_root}"
+
+"${repo_root}/scripts/build-macos.sh" "${build_args[@]}"
 
 if [[ ! -d "${app_bundle}" ]]; then
   echo "App bundle not found at '${app_bundle}'." >&2

@@ -11,6 +11,12 @@
 #include <QStandardPaths>
 #include <QSurfaceFormat>
 
+#include <algorithm>
+
+#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
+#include <QVTKOpenGLNativeWidget.h>
+#endif
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -81,9 +87,14 @@ void setupLogging()
 int main(int argc, char *argv[])
 {
     QSurfaceFormat format;
+#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
+    format = QVTKOpenGLNativeWidget::defaultFormat();
+    format.setDepthBufferSize(std::max(format.depthBufferSize(), 24));
+#else
     format.setDepthBufferSize(24);
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
+#endif
     QSurfaceFormat::setDefaultFormat(format);
 
     QApplication app(argc, argv);

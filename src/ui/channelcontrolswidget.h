@@ -19,6 +19,7 @@ public:
 
     void setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings);
     void setAutoContrastControlsVisible(bool visible);
+    void setLiveAutoInteractive(bool interactive);
 
 signals:
     void settingsEdited(const ChannelRenderSettings &settings);
@@ -51,6 +52,7 @@ public:
 
     void setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings);
     void setAutoContrastControlsVisible(bool visible);
+    void setLiveAutoInteractive(bool interactive);
     void updateSettings(const QVector<ChannelRenderSettings> &settings);
 
 signals:

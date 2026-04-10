@@ -77,6 +77,54 @@ int samplingStep(const RawFrame &frame)
     return qMax(1, static_cast<int>(std::sqrt((frame.width * frame.height) / 200000.0)));
 }
 
+int effectiveVolumeChannelIndex(const RawVolume &volume, int channelIndex)
+{
+    if (channelIndex < 0) {
+        return -1;
+    }
+
+    if (volume.components == 1) {
+        return 0;
+    }
+
+    if (channelIndex >= volume.components) {
+        return -1;
+    }
+
+    return channelIndex;
+}
+
+double sampleVolumeValue(const RawVolume &volume, int x, int y, int z, int channelDataIndex)
+{
+    const int bytesPerComponent = volume.bytesPerComponent();
+    const qsizetype planeBytes = volume.planeBytes();
+    const qsizetype offset = static_cast<qsizetype>(z) * planeBytes + static_cast<qsizetype>(y) * volume.width * bytesPerComponent
+                             + static_cast<qsizetype>(x) * bytesPerComponent;
+    const char *pixel = volume.channelData.at(channelDataIndex).constData() + offset;
+
+    switch (bytesPerComponent) {
+    case 1:
+        return static_cast<unsigned char>(pixel[0]);
+    case 2: {
+        quint16 value = 0;
+        std::memcpy(&value, pixel, sizeof(value));
+        return value;
+    }
+    case 4: {
+        if (volume.pixelDataType.compare(QStringLiteral("float"), Qt::CaseInsensitive) == 0) {
+            float value = 0.0f;
+            std::memcpy(&value, pixel, sizeof(value));
+            return value;
+        }
+        quint32 value = 0;
+        std::memcpy(&value, pixel, sizeof(value));
+        return value;
+    }
+    default:
+        return 0.0;
+    }
+}
+
 void sanitizePercentileRange(ChannelRenderSettings &settings)
 {
     settings.lowPercentile = std::clamp(settings.lowPercentile, 0.0, 100.0);
@@ -128,7 +176,7 @@ QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const Docum
         channel.enabled = true;
         channel.low = 0.0;
         channel.high = defaultHigh > 0.0 ? defaultHigh : 1.0;
-        channel.autoContrast = true;
+        channel.autoContrast = false;
         channel.lowPercentile = 0.1;
         channel.highPercentile = 99.9;
         if (i < info.channels.size() && info.channels.at(i).color.isValid()) {
@@ -169,6 +217,66 @@ ChannelAutoContrastAnalysis FrameRenderer::analyzeChannel(const RawFrame &frame,
             samples.push_back(value);
             minimum = std::min(minimum, value);
             maximum = std::max(maximum, value);
+        }
+    }
+
+    if (samples.isEmpty()) {
+        return analysis;
+    }
+
+    analysis.minimumValue = minimum;
+    analysis.maximumValue = maximum;
+    analysis.sortedSamples = samples;
+    std::sort(analysis.sortedSamples.begin(), analysis.sortedSamples.end());
+
+    analysis.histogramBins.fill(0, histogramBinCount);
+    if (histogramBinCount == 1 || qFuzzyCompare(minimum + 1.0, maximum + 1.0)) {
+        analysis.histogramBins[0] = static_cast<quint64>(samples.size());
+        return analysis;
+    }
+
+    const double denominator = maximum - minimum;
+    for (double value : samples) {
+        const double normalized = std::clamp((value - minimum) / denominator, 0.0, 1.0);
+        const int binIndex = std::clamp(static_cast<int>(normalized * (histogramBinCount - 1)), 0, histogramBinCount - 1);
+        ++analysis.histogramBins[binIndex];
+    }
+
+    return analysis;
+}
+
+ChannelAutoContrastAnalysis FrameRenderer::analyzeChannel(const RawVolume &volume, int channelIndex, int histogramBinCount)
+{
+    ChannelAutoContrastAnalysis analysis;
+
+    if (!volume.isValid() || histogramBinCount <= 0) {
+        return analysis;
+    }
+
+    const int dataIndex = effectiveVolumeChannelIndex(volume, channelIndex);
+    if (dataIndex < 0 || dataIndex >= volume.channelData.size()) {
+        return analysis;
+    }
+
+    const int stepXY = qMax(1, static_cast<int>(std::sqrt((static_cast<double>(volume.width) * volume.height) / 200000.0)));
+    const qsizetype sampleColumns = (volume.width + stepXY - 1) / stepXY;
+    const qsizetype sampleRows = (volume.height + stepXY - 1) / stepXY;
+    const qsizetype samplesPerPlane = sampleColumns * sampleRows;
+    const int stepZ = qMax(1, static_cast<int>(std::ceil(static_cast<double>(samplesPerPlane) * volume.depth / 200000.0)));
+
+    QVector<double> samples;
+    samples.reserve(200000);
+
+    double minimum = std::numeric_limits<double>::max();
+    double maximum = std::numeric_limits<double>::lowest();
+    for (int z = 0; z < volume.depth; z += stepZ) {
+        for (int y = 0; y < volume.height; y += stepXY) {
+            for (int x = 0; x < volume.width; x += stepXY) {
+                const double value = sampleVolumeValue(volume, x, y, z, dataIndex);
+                samples.push_back(value);
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
         }
     }
 

@@ -2,20 +2,25 @@
 
 #include "core/movieexporter.h"
 #include "core/documentcontroller.h"
+#include "core/volumeloader.h"
 
+#include <QFutureWatcher>
 #include <QMainWindow>
 #include <QRect>
 
 class QAction;
 class ChannelControlsWidget;
+class QCheckBox;
 class QEvent;
 class ImageViewport;
 class QLabel;
 class QMediaCaptureSession;
 class QMediaRecorder;
 class QPlainTextEdit;
+class QPushButton;
 class QSlider;
 class QSpinBox;
+class QStackedWidget;
 class QTabWidget;
 class QTimer;
 class QToolButton;
@@ -23,7 +28,7 @@ class QTreeWidget;
 class QVideoFrameInput;
 class QVBoxLayout;
 class QCloseEvent;
-class VolumeViewerWindow;
+class VolumeViewport3D;
 
 class MainWindow : public QMainWindow
 {
@@ -42,7 +47,7 @@ private slots:
     void saveCurrentRoiAs();
     void exportMovieAs();
     void exportRoiMovieAs();
-    void open3DView();
+    void onVolumeViewCheckToggled(bool checked);
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -53,6 +58,8 @@ private slots:
     void updateStatusMessage(const QString &message);
     void updateHoveredPixel(const QPoint &pixelPosition, bool insideImage);
     void updateZoomLabel(double zoomFactor, bool fitToWindow);
+    void handleVolumeLoadFinished();
+    void maybeReloadVolumeForNonZCoordinateChange();
 
 private:
     enum class ExportScope
@@ -123,6 +130,9 @@ private:
     [[nodiscard]] QString buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const;
     [[nodiscard]] int findTimeLoopIndex() const;
     [[nodiscard]] bool hasUsableZStack() const;
+    [[nodiscard]] bool isVolumeViewActive() const;
+    [[nodiscard]] bool volumeMatchesCurrentFixedCoordinates() const;
+    [[nodiscard]] QString volumeFixedCoordinateSummary() const;
     void setMovieExportUiState(bool active);
     void startMovieExportPlayback(const MovieExportSettings &settings);
     void requestNextMovieExportFrame();
@@ -131,12 +141,31 @@ private:
     void finishMovieExportPlayback(const QString &errorMessage = QString());
     void cleanupMovieExportPlayback();
     void openAutoContrastTuningDialog(int channelIndex);
+    void applyVolumeViewMode(bool volumeViewActive);
+    void applyZLoopNavigatorLock();
+    void startVolumeLoad();
+    void syncVolumeViewportChannelSettings();
+    void autoContrastChannelForActiveView(int channelIndex);
+    void autoContrastAllForActiveView();
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();
 
     DocumentController controller_;
     ImageViewport *imageViewport_ = nullptr;
+    QStackedWidget *viewerStack_ = nullptr;
+    QCheckBox *volumeViewCheck_ = nullptr;
+    QWidget *volumePage_ = nullptr;
+    VolumeViewport3D *volumeViewport_ = nullptr;
+    QLabel *volumeStatusLabel_ = nullptr;
+    QLabel *volumeCoordsLabel_ = nullptr;
+    QPushButton *volumeFitButton_ = nullptr;
+    QPushButton *volumeResetButton_ = nullptr;
+    QFutureWatcher<VolumeLoadResult> volumeWatcher_;
+    int volumeLoadGeneration_ = 0;
+    RawVolume cachedVolume_;
+    int documentZLoopIndex_ = -1;
+
     QWidget *navigatorContainer_ = nullptr;
     QVBoxLayout *navigatorRowsLayout_ = nullptr;
     QLabel *navigatorEmptyLabel_ = nullptr;
@@ -152,7 +181,6 @@ private:
     QAction *openAction_ = nullptr;
     QAction *reloadAction_ = nullptr;
     QAction *quitAction_ = nullptr;
-    QAction *threeDViewAction_ = nullptr;
     bool movieExportInProgress_ = false;
     bool timePlaybackActive_ = false;
     bool timePlaybackAwaitingFrame_ = false;
@@ -174,5 +202,4 @@ private:
     QMediaRecorder *movieRecorder_ = nullptr;
     QVideoFrameInput *movieVideoFrameInput_ = nullptr;
     QVideoFrame moviePendingFrame_;
-    VolumeViewerWindow *volumeViewerWindow_ = nullptr;
 };

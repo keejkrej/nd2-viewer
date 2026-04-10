@@ -21,25 +21,74 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 option(ND2VIEWER_USE_SHARED_SDK "Link against the Nikon shared SDK." ON)
+set(_nd2viewer_enable_vtk_default OFF)
 if(APPLE)
   set(_nd2sdk_root_default "$ENV{HOME}/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8")
   set(_qt6_dir_default "/opt/homebrew/lib/cmake/Qt6")
+  set(_nd2viewer_enable_vtk_default ON)
+  file(GLOB _vtk_dir_candidates "/opt/homebrew/lib/cmake/vtk-*")
+  if(_vtk_dir_candidates)
+    list(SORT _vtk_dir_candidates ORDER DESCENDING)
+    list(GET _vtk_dir_candidates 0 _vtk_dir_default)
+  else()
+    set(_vtk_dir_default "")
+  endif()
 elseif(WIN32)
   set(_nd2sdk_root_default "C:/Program Files/nd2readsdk-shared")
   set(_qt6_dir_default "")
+  set(_vtk_dir_default "")
 else()
   set(_nd2sdk_root_default "")
   set(_qt6_dir_default "")
+  set(_vtk_dir_default "")
 endif()
 
 set(ND2SDK_ROOT "${_nd2sdk_root_default}" CACHE PATH "Path to the ND2 SDK root.")
 set(Qt6_DIR "${_qt6_dir_default}" CACHE PATH "Path to Qt6Config.cmake, e.g. C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6")
+option(ND2VIEWER_ENABLE_VTK_3D "Enable the VTK-backed 3D viewport when VTK is available." ${_nd2viewer_enable_vtk_default})
+set(VTK_DIR "${_vtk_dir_default}" CACHE PATH "Path to VTKConfig.cmake. Override if Homebrew or your VTK install is not auto-detected.")
 
 if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
 endif()
+if(VTK_DIR)
+  list(APPEND CMAKE_PREFIX_PATH "${VTK_DIR}")
+endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets)
+
+set(ND2VIEWER_VTK_AVAILABLE OFF)
+set(ND2VIEWER_VTK_LIBS "")
+if(ND2VIEWER_ENABLE_VTK_3D)
+  find_package(VTK CONFIG QUIET COMPONENTS
+    CommonCore
+    CommonDataModel
+    InteractionStyle
+    GUISupportQt
+    RenderingCore
+    RenderingOpenGL2
+    RenderingVolume
+    RenderingVolumeOpenGL2
+  )
+  if(VTK_FOUND)
+    set(ND2VIEWER_VTK_AVAILABLE ON)
+    set(ND2VIEWER_VTK_LIBS
+      VTK::CommonCore
+      VTK::CommonDataModel
+      VTK::InteractionStyle
+      VTK::GUISupportQt
+      VTK::RenderingCore
+      VTK::RenderingOpenGL2
+      VTK::RenderingVolume
+      VTK::RenderingVolumeOpenGL2
+    )
+  else()
+    if(APPLE AND VTK_DIR)
+      message(FATAL_ERROR "VTK was not found at VTK_DIR='${VTK_DIR}'. Install Homebrew VTK or pass the correct VTK_DIR.")
+    endif()
+    message(WARNING "VTK was not found. The 3D viewport will use the legacy OpenGL backend.")
+  endif()
+endif()
 
 set(LIBCZI_DO_NOT_SET_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
 set(LIBCZI_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
@@ -87,11 +136,19 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/ui/imageviewport.h
   src/ui/mainwindow.cpp
   src/ui/mainwindow.h
-  src/ui/volumeviewerwindow.cpp
-  src/ui/volumeviewerwindow.h
+  src/ui/volumeviewport3d_backend.h
   src/ui/volumeviewport3d.cpp
   src/ui/volumeviewport3d.h
+  src/ui/volumeviewport3d_gl.cpp
+  src/ui/volumeviewport3d_gl.h
 )
+
+if(ND2VIEWER_VTK_AVAILABLE)
+  target_sources(nd2-viewer PRIVATE
+    src/ui/volumeviewport3d_vtk.cpp
+    src/ui/volumeviewport3d_vtk.h
+  )
+endif()
 
 if(WIN32)
   target_sources(nd2-viewer PRIVATE
@@ -132,6 +189,9 @@ if(WIN32)
       NOMINMAX
       WIN32_LEAN_AND_MEAN
   )
+endif()
+if(ND2VIEWER_VTK_AVAILABLE)
+  target_compile_definitions(nd2-viewer PRIVATE ND2VIEWER_HAS_VTK_3D=1)
 endif()
 
 if(ND2VIEWER_USE_SHARED_SDK)
@@ -195,7 +255,12 @@ target_link_libraries(nd2-viewer
     libCZI
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
+    ${ND2VIEWER_VTK_LIBS}
 )
+
+if(ND2VIEWER_VTK_AVAILABLE)
+  vtk_module_autoinit(TARGETS nd2-viewer MODULES ${ND2VIEWER_VTK_LIBS})
+endif()
 
 if(APPLE)
   install(TARGETS nd2-viewer

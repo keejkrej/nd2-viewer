@@ -10,8 +10,8 @@ nd2-viewer is not a qt6 desktop viewer for nd2 but ND^2 (n-dimensional data).
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
 - Use percentile-based per-channel live auto contrast with a histogram tuning dialog
-- Open a separate `Tools > 3D View` window for z-stacks from ND2 and CZI files
-- Explore z-stacks in 3D with the VTK-backed viewer, including orbit, zoom, `Fit To Volume`, `Reset View`, and render-mode switching
+- Switch between integrated `2D` and `3D` viewer modes for z-stacks from ND2 and CZI files
+- Explore z-stacks in 3D with the VTK-backed viewer, including orbit, zoom, `Reset`, and render-mode switching
 - Keep 3D channel visibility, colors, and live auto contrast independent from the main 2D view
 - Export MP4 movies with explicit `start`, `end`, and `step` controls on the time axis
 - Inspect attributes, experiment metadata, frame metadata, and text info
@@ -229,7 +229,9 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 - The first CZI milestone supports standard plane-based files and rejects tiled, mosaic, pyramid, or otherwise irregular CZI layouts with a clear open-time error.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
-- `Tools > 3D View` is enabled only for files with a usable z-loop and opens a separate 3D window seeded from the current 2D channel state.
-- The 3D window now supports `Balanced`, `Volume`, and `Detail` render modes plus an explicit `Fit To Volume` action for reframing the occupied part of the stack.
+- The integrated `3D` mode is enabled only for files with a usable z-loop and reuses the current shared viewer state.
+- The shared view action now shows `Fit` in 2D and `Reset` in 3D.
+- `Fit` in 2D is a one-shot action and no longer acts like a live auto-fit mode during playback or navigation.
+- The 3D mode supports `Balanced`, `Volume`, and `Detail` render modes and a `Reset` action that restores the default camera angle and refits the occupied volume.
 - The `Balanced`, `Volume`, and `Detail` 3D render modes now share the same vertical orientation, so overlays line up instead of appearing vertically mirrored.
 - Movie export now opens a config dialog first, then prompts for the final save path. The suggested filename includes fixed non-time coordinates plus the chosen `start`, `end`, and `step` range.

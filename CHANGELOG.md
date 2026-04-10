@@ -2,6 +2,30 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.5] - 2026-04-10
+
+### Changed
+- Bumped the project version to `0.1.5`.
+- Simplified the shared viewport action so 2D mode uses a one-shot `Fit` action while 3D mode uses `Reset`.
+- Changed 2D fit behavior to be one-shot instead of a persistent auto-fit mode, so playback and navigation retain the fitted zoom and pan state until the user changes it again.
+- Made the Windows and macOS build scripts require an explicit `Debug` or `Release` configuration and use matching `-debug` / `-release` build-tree naming.
+- Split VTK bootstrap and resolution into configuration-specific `vtk-9.5.2-qt611-debug` and `vtk-9.5.2-qt611-release` paths on both Windows and macOS.
+- Changed the package scripts to package-only entrypoints that assume a completed release build already exists.
+
+### Fixed
+- Restored deterministic 3D reset behavior without reintroducing the unstable repeated-reset drift.
+- Fixed Windows release packaging so CPack no longer inherits a `Program Files` default install prefix and now uses a per-user install root under `%LOCALAPPDATA%\Programs\nd2-viewer`.
+- Fixed Windows build-tree runtime deployment by moving Qt deploy into the build step, making both debug and release build trees directly runnable after a successful build.
+
+### Build And Packaging
+- Added release-tree migration for existing VTK installs so older `vtk-9.5.2-qt611` build/install roots are renamed in place to `vtk-9.5.2-qt611-release` instead of being rebuilt.
+- Added configure-time validation that rejects debug app builds when the resolved VTK package only exposes release targets.
+- Moved `windeployqt` and `macdeployqt` into the normal build scripts so packaging reuses an already-deployed build tree.
+- Kept NSIS and DMG packaging as release-only flows, but removed deploy work from the package scripts themselves.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` for the current in-app 2D/3D view workflow, the `Fit` / `Reset` control behavior, the explicit debug/release build commands, and the `0.1.5` packaging output example.
+
 ## [0.1.4] - 2026-04-10
 
 ### Added

@@ -59,7 +59,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output should now use the `0.1.4` version string, for example `dist\nd2-viewer-0.1.4-win64.exe`.
+- A successful recent package output should now use the `0.1.5` version string, for example `dist\nd2-viewer-0.1.5-win64.exe`.
 - On Windows, the default install prefix is now per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
 - `scripts/build-msvc.ps1` now runs `windeployqt` after a successful build so the build tree is directly runnable.
 - `scripts/build-macos.sh` now runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable.
@@ -84,10 +84,12 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - Spin boxes still commit immediately for precise stepping.
 - `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
 - The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
-- `Tools > 3D View` is now available for files with a usable z-loop and opens a separate 3D viewer window while the main window is disabled.
+- The integrated `3D` mode is available for files with a usable z-loop and reuses the main viewer instead of opening a separate window.
 - The 3D viewer loads the full z-stack in the background, keeps its own channel colors and contrast state, supports `Balanced`, `Volume`, and `Detail` render modes, and now always uses the VTK backend.
 - `Balanced`, `Volume`, and `Detail` now share the same Y-axis orientation instead of rendering upside-down copies of each other.
-- `Reset View` restores the default camera angle and refits the stack, while `Fit To Volume` preserves the current angle and only reframes the occupied volume.
+- The shared view action now shows `Fit` in 2D and `Reset` in 3D.
+- 2D `Fit` is a one-shot action and no longer behaves like a persistent auto-fit mode during playback or frame changes.
+- 3D `Reset` restores the default camera angle and refits the occupied part of the volume.
 - Movie export now uses `start`, `end`, and `step` terminology. The config dialog no longer asks for a path up front; after `Continue`, the save dialog suggests a filename that includes fixed non-time coordinates plus `movie_start..._end..._step...`.
 
 ## Validation Expectations
@@ -100,10 +102,10 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
   - if relevant, run the package script
 - On this machine, the default validation path is still the MSVC scripts unless the task is specifically about macOS packaging.
 - For 3D viewer work, manually verify:
-  - `Tools > 3D View` stays disabled for 2D-only files and enables for ND2/CZI z-stacks
-  - the 3D window disables the main window while open, then restores it on close
+  - the `3D` mode toggle stays disabled for 2D-only files and enables for ND2/CZI z-stacks
   - `Balanced`, `Volume`, and `Detail` align on the same structures instead of showing vertically mirrored copies
-  - `Fit To Volume`, `Reset View`, orbit, zoom, and render-mode switching behave predictably
+  - `Fit` in 2D and `Reset` in 3D behave predictably
+  - orbit, zoom, and render-mode switching behave predictably
   - 3D channel toggles, colors, and auto-contrast adjustments do not change the main 2D view
 - For slider/navigation work, manually verify:
   - drag/click interactions only update once per completed slider interaction

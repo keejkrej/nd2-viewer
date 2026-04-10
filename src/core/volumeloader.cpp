@@ -174,12 +174,11 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
     result.channelSettings = VolumeUtils::defaultVolumeChannelSettings(info, seedChannelSettings, displayChannelCount);
     for (int channelIndex = 0; channelIndex < result.channelSettings.size(); ++channelIndex) {
         const ChannelRenderSettings &settings = result.channelSettings.at(channelIndex);
-        qInfo("3D inherited channel settings channel=%d enabled=%d low=%.6f high=%.6f auto=%d",
+        qInfo("3D inherited channel settings channel=%d enabled=%d low=%.6f high=%.6f",
               channelIndex,
               settings.enabled ? 1 : 0,
               settings.low,
-              settings.high,
-              settings.autoContrast ? 1 : 0);
+              settings.high);
     }
     result.success = result.volume.isValid();
     if (!result.success && result.error.isEmpty()) {

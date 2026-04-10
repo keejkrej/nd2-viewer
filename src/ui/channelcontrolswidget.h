@@ -19,11 +19,10 @@ public:
 
     void setChannel(const ChannelInfo &channel, const ChannelRenderSettings &settings);
     void setAutoContrastControlsVisible(bool visible);
-    void setLiveAutoInteractive(bool interactive);
+    void setAutoContrastTuningEnabled(bool enabled);
 
 signals:
     void settingsEdited(const ChannelRenderSettings &settings);
-    void autoContrastRequested();
     void autoContrastTuningRequested();
 
 private:
@@ -33,12 +32,10 @@ private:
 
     bool updating_ = false;
     QCheckBox *enabledCheck_ = nullptr;
-    QCheckBox *autoCheck_ = nullptr;
     QLabel *nameLabel_ = nullptr;
     QPushButton *colorSwatchButton_ = nullptr;
     QDoubleSpinBox *lowSpinBox_ = nullptr;
     QDoubleSpinBox *highSpinBox_ = nullptr;
-    QPushButton *autoButton_ = nullptr;
     QPushButton *tuneButton_ = nullptr;
     ChannelRenderSettings settings_;
 };
@@ -52,12 +49,14 @@ public:
 
     void setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings);
     void setAutoContrastControlsVisible(bool visible);
+    void setLiveAutoEnabled(bool enabled);
     void setLiveAutoInteractive(bool interactive);
+    void setAutoContrastTuningEnabled(bool enabled);
     void updateSettings(const QVector<ChannelRenderSettings> &settings);
 
 signals:
     void channelSettingsChanged(int index, const ChannelRenderSettings &settings);
-    void autoContrastRequested(int index);
+    void liveAutoChanged(bool enabled);
     void autoContrastTuningRequested(int index);
     void autoContrastAllRequested();
 
@@ -65,9 +64,12 @@ private:
     void clearRows();
 
     QVBoxLayout *rowsLayout_ = nullptr;
+    QCheckBox *liveAutoCheck_ = nullptr;
     QLabel *emptyStateLabel_ = nullptr;
     QPushButton *autoAllButton_ = nullptr;
     QVector<ChannelRowWidget *> rows_;
     QVector<ChannelInfo> channels_;
     bool autoContrastControlsVisible_ = true;
+    bool liveAutoEnabled_ = false;
+    bool autoContrastTuningEnabled_ = true;
 };

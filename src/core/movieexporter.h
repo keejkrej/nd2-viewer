@@ -18,6 +18,7 @@ struct MovieExportSettings
     QString outputPath;
     QVector<int> fixedCoordinates;
     QVector<ChannelRenderSettings> channelSettings;
+    bool liveAutoEnabled = false;
     int timeLoopIndex = -1;
     int startFrame = 0;
     int endFrame = 0;

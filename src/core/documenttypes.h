@@ -75,7 +75,6 @@ struct ChannelRenderSettings
     QColor color = Qt::white;
     double low = 0.0;
     double high = 1.0;
-    bool autoContrast = true;
     double lowPercentile = 0.1;
     double highPercentile = 99.9;
 };

@@ -11,21 +11,18 @@
 
 class QAction;
 class ChannelControlsWidget;
-class QCheckBox;
 class QEvent;
+class FileInfoDialog;
 class ImageViewport;
 class QLabel;
 class QMediaCaptureSession;
 class QMediaRecorder;
-class QPlainTextEdit;
 class QPushButton;
 class QSlider;
 class QSpinBox;
 class QStackedWidget;
-class QTabWidget;
 class QTimer;
 class QToolButton;
-class QTreeWidget;
 class QVideoFrameInput;
 class QVBoxLayout;
 class QCloseEvent;
@@ -46,7 +43,6 @@ private slots:
     void saveCurrentRoiAs();
     void exportMovieAs();
     void exportRoiMovieAs();
-    void onVolumeViewCheckToggled(bool checked);
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -56,7 +52,6 @@ private slots:
     void updateBusyState(bool busy);
     void updateStatusMessage(const QString &message);
     void updateHoveredPixel(const QPoint &pixelPosition, bool insideImage);
-    void updateZoomLabel(double zoomFactor, bool fitToWindow);
     void handleVolumeLoadFinished();
     void maybeReloadVolumeForNonZCoordinateChange();
 
@@ -93,30 +88,23 @@ private:
         QLabel *details = nullptr;
     };
 
-    struct MetadataWidgets
-    {
-        QTreeWidget *tree = nullptr;
-        QPlainTextEdit *raw = nullptr;
-    };
-
     void buildMenus();
     void buildCentralUi();
     void exportCurrentSelection(ExportScope scope);
     void exportMovieSelection(ExportScope scope);
     void exportCurrentVolumeFrame();
     void exportVolumeMovie();
+    void showFileInfoDialog();
     void rebuildNavigatorControls();
     void commitLoopSliderValue(int loopIndex);
     void handleTimePlaybackButton();
     void startTimePlayback();
     void stopTimePlayback();
     void advanceTimePlayback();
-    void rebuildMetadataTabs();
-    MetadataWidgets addMetadataTab(const QString &title);
-    void setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText);
+    void completeTimePlaybackStep();
     void updateStaticMetadataUi();
     void updateFrameMetadataUi();
-    void setOverviewContent(const DocumentInfo &info);
+    void updateFileInfoDialog();
     [[nodiscard]] ExportMode promptForExportMode(ExportScope scope) const;
     [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath,
                                                        ExportMode mode,
@@ -133,7 +121,8 @@ private:
     [[nodiscard]] bool hasUsableZStack() const;
     [[nodiscard]] bool isVolumeViewActive() const;
     [[nodiscard]] bool volumeMatchesCurrentFixedCoordinates() const;
-    [[nodiscard]] QString volumeFixedCoordinateSummary() const;
+    void setVolumeViewActive(bool active);
+    void updateViewModeButtons();
     void setMovieExportUiState(bool active);
     void startMovieExportPlayback(const MovieExportSettings &settings);
     void requestNextMovieExportFrame();
@@ -150,6 +139,7 @@ private:
     void applyZLoopNavigatorLock();
     void startVolumeLoad();
     void syncVolumeViewportChannelSettings();
+    void setLiveAutoForAllChannels(bool enabled);
     void autoContrastChannelForActiveView(int channelIndex);
     void autoContrastAllForActiveView();
     [[nodiscard]] QImage captureCurrentVolumeImage() const;
@@ -160,16 +150,17 @@ private:
     DocumentController controller_;
     ImageViewport *imageViewport_ = nullptr;
     QStackedWidget *viewerStack_ = nullptr;
-    QCheckBox *volumeViewCheck_ = nullptr;
+    QWidget *viewModeControl_ = nullptr;
+    QPushButton *view2dButton_ = nullptr;
+    QPushButton *view3dButton_ = nullptr;
     QWidget *volumePage_ = nullptr;
     VolumeViewport3D *volumeViewport_ = nullptr;
-    QLabel *volumeStatusLabel_ = nullptr;
-    QLabel *volumeCoordsLabel_ = nullptr;
     QPushButton *volumeFitButton_ = nullptr;
     QPushButton *volumeResetButton_ = nullptr;
     QFutureWatcher<VolumeLoadResult> volumeWatcher_;
     int volumeLoadGeneration_ = 0;
     RawVolume cachedVolume_;
+    bool volumeViewportHasVolume_ = false;
     int documentZLoopIndex_ = -1;
     VolumeViewport3DCameraState pendingVolumeCameraState_;
 
@@ -178,15 +169,12 @@ private:
     QLabel *navigatorEmptyLabel_ = nullptr;
     QVector<LoopWidgets> loopControls_;
     ChannelControlsWidget *channelControlsWidget_ = nullptr;
-    QTreeWidget *metadataOverviewTree_ = nullptr;
-    QTabWidget *metadataTabs_ = nullptr;
-    QVector<MetadataWidgets> metadataSectionWidgets_;
-    MetadataWidgets frameMetadataWidgets_;
+    FileInfoDialog *fileInfoDialog_ = nullptr;
     QLabel *infoStatusLabel_ = nullptr;
-    QLabel *zoomStatusLabel_ = nullptr;
     QLabel *pixelStatusLabel_ = nullptr;
     QAction *openAction_ = nullptr;
     QAction *reloadAction_ = nullptr;
+    QAction *fileInfoAction_ = nullptr;
     QAction *quitAction_ = nullptr;
     bool movieExportInProgress_ = false;
     bool timePlaybackActive_ = false;
@@ -209,11 +197,10 @@ private:
     bool movieExportVolumeView_ = false;
     QVector<ChannelRenderSettings> movieExportFrozenChannelSettings_;
     QVector<ChannelRenderSettings> movieExportOriginalChannelSettings_;
+    bool movieExportOriginalLiveAutoEnabled_ = false;
     VolumeViewport3DCameraState movieExportFrozenCameraState_;
     RawVolume movieExportOriginalVolume_;
     VolumeViewport3DCameraState movieExportOriginalCameraState_;
-    QString movieExportOriginalVolumeStatusText_;
-    QString movieExportOriginalVolumeCoordsText_;
     QMediaCaptureSession *movieCaptureSession_ = nullptr;
     QMediaRecorder *movieRecorder_ = nullptr;
     QVideoFrameInput *movieVideoFrameInput_ = nullptr;

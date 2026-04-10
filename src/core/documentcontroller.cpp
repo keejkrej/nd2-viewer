@@ -2,6 +2,35 @@
 
 #include <QtConcurrent>
 
+namespace
+{
+bool applyAutoContrastAllChannels(const RawFrame &frame, QVector<ChannelRenderSettings> &settings)
+{
+    if (!frame.isValid() || settings.isEmpty()) {
+        return false;
+    }
+
+    bool changed = false;
+    ChannelAutoContrastAnalysis sharedSingleChannelAnalysis;
+    bool sharedSingleChannelAnalysisReady = false;
+    for (int channelIndex = 0; channelIndex < settings.size(); ++channelIndex) {
+        if (frame.components == 1) {
+            if (!sharedSingleChannelAnalysisReady) {
+                sharedSingleChannelAnalysis = FrameRenderer::analyzeChannel(frame, channelIndex);
+                sharedSingleChannelAnalysisReady = true;
+            }
+            changed = FrameRenderer::applyAutoContrastToChannel(sharedSingleChannelAnalysis, settings[channelIndex]) || changed;
+            continue;
+        }
+
+        changed = FrameRenderer::applyAutoContrastToChannel(FrameRenderer::analyzeChannel(frame, channelIndex), settings[channelIndex])
+                  || changed;
+    }
+
+    return changed;
+}
+}
+
 DocumentController::DocumentController(QObject *parent)
     : QObject(parent)
 {
@@ -38,6 +67,8 @@ bool DocumentController::openFile(const QString &path)
     currentRawFrame_ = {};
     currentFrameMetadataSection_ = {};
     channelSettingsRevision_ = 0;
+    liveAutoEnabled_ = false;
+    pendingInitialAutoContrast_ = true;
 
     emit documentChanged();
     emit coordinateStateChanged();
@@ -67,6 +98,8 @@ void DocumentController::closeFile()
     currentSequenceIndex_ = -1;
     queuedSequenceIndex_ = -1;
     channelSettingsRevision_ = 0;
+    liveAutoEnabled_ = false;
+    pendingInitialAutoContrast_ = false;
     setBusy(false);
 }
 
@@ -93,6 +126,11 @@ const FrameCoordinateState &DocumentController::coordinateState() const
 const QVector<ChannelRenderSettings> &DocumentController::channelSettings() const
 {
     return channelSettings_;
+}
+
+bool DocumentController::liveAutoEnabled() const
+{
+    return liveAutoEnabled_;
 }
 
 const RenderedFrame &DocumentController::renderedFrame() const
@@ -158,6 +196,16 @@ void DocumentController::setChannelSettings(const QVector<ChannelRenderSettings>
     ++channelSettingsRevision_;
     emit channelSettingsChanged();
     rerenderCurrentFrame(false);
+}
+
+void DocumentController::setLiveAutoEnabled(bool enabled)
+{
+    if (liveAutoEnabled_ == enabled) {
+        return;
+    }
+
+    liveAutoEnabled_ = enabled;
+    emit channelSettingsChanged();
 }
 
 void DocumentController::autoContrastChannel(int channelIndex)
@@ -250,9 +298,12 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
     setBusy(true);
     const int requestId = ++requestCounter_;
     const int settingsRevision = channelSettingsRevision_;
+    const bool applyInitialAutoContrast = pendingInitialAutoContrast_;
+    const bool liveAutoEnabled = liveAutoEnabled_;
     const FrameCoordinateState coordinates = coordinateState_;
     const QVector<ChannelRenderSettings> channelSettings = channelSettings_;
-    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, settingsRevision, sequenceIndex, coordinates, channelSettings]() {
+    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, settingsRevision, sequenceIndex, coordinates, channelSettings,
+                                               applyInitialAutoContrast, liveAutoEnabled]() {
         FrameLoadResult result;
         result.requestId = requestId;
         result.settingsRevision = settingsRevision;
@@ -269,7 +320,8 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
         result.metadataSection = reader_->frameMetadataSection(sequenceIndex, &metadataError);
         result.frame = frame;
         result.channelSettings = channelSettings;
-        result.channelSettingsChanged = FrameRenderer::applyAutoContrast(result.frame, result.channelSettings);
+        result.channelSettingsChanged =
+            (applyInitialAutoContrast || liveAutoEnabled) ? applyAutoContrastAllChannels(result.frame, result.channelSettings) : false;
         result.renderedFrame = FrameRenderer::render(result.frame, coordinates, result.channelSettings);
         result.success = true;
         if (!metadataError.isEmpty()) {
@@ -299,6 +351,7 @@ void DocumentController::handleFrameLoadFinished()
     currentSequenceIndex_ = result.sequenceIndex;
     currentRawFrame_ = result.frame;
     currentFrameMetadataSection_ = result.metadataSection;
+    pendingInitialAutoContrast_ = false;
 
     if (result.settingsRevision == channelSettingsRevision_) {
         channelSettings_ = result.channelSettings;
@@ -356,7 +409,7 @@ void DocumentController::rerenderCurrentFrame(bool updateAutoContrast)
         return;
     }
 
-    if (updateAutoContrast && FrameRenderer::applyAutoContrast(currentRawFrame_, channelSettings_)) {
+    if (updateAutoContrast && liveAutoEnabled_ && applyAutoContrastAllChannels(currentRawFrame_, channelSettings_)) {
         emit channelSettingsChanged();
     }
 

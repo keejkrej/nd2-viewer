@@ -299,7 +299,9 @@ VolumeViewport3DBackendVtk::PreparedVolumeData VolumeViewport3DBackendVtk::prepa
         for (int z = 0; z < prepared.depth; ++z) {
             const int srcZ = std::min(z * prepared.factorZ, volume.depth - 1);
             for (int y = 0; y < prepared.height; ++y) {
-                const int srcY = std::min(y * prepared.factorY, volume.height - 1);
+                // Qt image rows are top-to-bottom, while VTK's world Y axis points up.
+                // Mirror the source rows here so the 3D volume aligns with the 2D view.
+                const int srcY = volume.height - 1 - std::min(y * prepared.factorY, volume.height - 1);
                 for (int x = 0; x < prepared.width; ++x) {
                     const int srcX = std::min(x * prepared.factorX, volume.width - 1);
                     const qsizetype srcVoxelIndex = (static_cast<qsizetype>(srcZ) * volume.width * volume.height)

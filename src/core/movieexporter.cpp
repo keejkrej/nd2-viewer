@@ -16,6 +16,32 @@
 
 namespace
 {
+bool applyAutoContrastAllChannels(const RawFrame &frame, QVector<ChannelRenderSettings> &settings)
+{
+    if (!frame.isValid() || settings.isEmpty()) {
+        return false;
+    }
+
+    bool changed = false;
+    ChannelAutoContrastAnalysis sharedSingleChannelAnalysis;
+    bool sharedSingleChannelAnalysisReady = false;
+    for (int channelIndex = 0; channelIndex < settings.size(); ++channelIndex) {
+        if (frame.components == 1) {
+            if (!sharedSingleChannelAnalysisReady) {
+                sharedSingleChannelAnalysis = FrameRenderer::analyzeChannel(frame, channelIndex);
+                sharedSingleChannelAnalysisReady = true;
+            }
+            changed = FrameRenderer::applyAutoContrastToChannel(sharedSingleChannelAnalysis, settings[channelIndex]) || changed;
+            continue;
+        }
+
+        changed = FrameRenderer::applyAutoContrastToChannel(FrameRenderer::analyzeChannel(frame, channelIndex), settings[channelIndex])
+                  || changed;
+    }
+
+    return changed;
+}
+
 MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings, DocumentReader *reader)
 {
     MovieExportResult result;
@@ -242,7 +268,9 @@ QImage MovieExportWorker::renderFrameImage(int timeValue, QString *errorMessage)
 
     FrameCoordinateState coordinateState;
     coordinateState.values = coordinates;
-    FrameRenderer::applyAutoContrast(rawFrame, workingChannelSettings_);
+    if (settings_.liveAutoEnabled) {
+        applyAutoContrastAllChannels(rawFrame, workingChannelSettings_);
+    }
     QImage image = FrameRenderer::render(rawFrame, coordinateState, workingChannelSettings_).image;
     if (settings_.roiRect.isValid() && !settings_.roiRect.isEmpty()) {
         image = image.copy(settings_.roiRect);

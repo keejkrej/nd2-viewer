@@ -94,6 +94,37 @@ int effectiveVolumeChannelIndex(const RawVolume &volume, int channelIndex)
     return channelIndex;
 }
 
+RawFrame rawVolumeSlice(const RawVolume &volume, int channelIndex, int zIndex)
+{
+    RawFrame frame;
+
+    if (!volume.isValid() || zIndex < 0 || zIndex >= volume.depth) {
+        return frame;
+    }
+
+    const int dataIndex = effectiveVolumeChannelIndex(volume, channelIndex);
+    if (dataIndex < 0 || dataIndex >= volume.channelData.size()) {
+        return frame;
+    }
+
+    const qsizetype planeBytes = volume.planeBytes();
+    const qsizetype offset = static_cast<qsizetype>(zIndex) * planeBytes;
+    const QByteArray &channelBytes = volume.channelData.at(dataIndex);
+    if (offset < 0 || offset + planeBytes > channelBytes.size()) {
+        return frame;
+    }
+
+    frame.sequenceIndex = zIndex;
+    frame.width = volume.width;
+    frame.height = volume.height;
+    frame.bitsPerComponent = volume.bitsPerComponent;
+    frame.components = 1;
+    frame.pixelDataType = volume.pixelDataType;
+    frame.bytesPerLine = static_cast<qsizetype>(volume.width) * volume.bytesPerComponent();
+    frame.data = channelBytes.mid(offset, planeBytes);
+    return frame;
+}
+
 double sampleVolumeValue(const RawVolume &volume, int x, int y, int z, int channelDataIndex)
 {
     const int bytesPerComponent = volume.bytesPerComponent();
@@ -176,7 +207,6 @@ QVector<ChannelRenderSettings> FrameRenderer::defaultChannelSettings(const Docum
         channel.enabled = true;
         channel.low = 0.0;
         channel.high = defaultHigh > 0.0 ? defaultHigh : 1.0;
-        channel.autoContrast = false;
         channel.lowPercentile = 0.1;
         channel.highPercentile = 99.9;
         if (i < info.channels.size() && info.channels.at(i).color.isValid()) {
@@ -305,6 +335,12 @@ ChannelAutoContrastAnalysis FrameRenderer::analyzeChannel(const RawVolume &volum
     return analysis;
 }
 
+ChannelAutoContrastAnalysis FrameRenderer::analyzeVolumeSlice(const RawVolume &volume, int channelIndex, int zIndex, int histogramBinCount)
+{
+    const RawFrame frame = rawVolumeSlice(volume, channelIndex, zIndex);
+    return analyzeChannel(frame, 0, histogramBinCount);
+}
+
 bool FrameRenderer::applyAutoContrastToChannel(const ChannelAutoContrastAnalysis &analysis, ChannelRenderSettings &settings)
 {
     if (!analysis.isValid()) {
@@ -325,38 +361,49 @@ bool FrameRenderer::applyAutoContrastToChannel(const ChannelAutoContrastAnalysis
     return false;
 }
 
-bool FrameRenderer::applyAutoContrast(const RawFrame &frame, QVector<ChannelRenderSettings> &settings)
+bool FrameRenderer::applyAutoContrastToChannelFromZSlices(const RawVolume &volume, int channelIndex, ChannelRenderSettings &settings)
 {
-    if (!frame.isValid() || settings.isEmpty()) {
+    if (!volume.isValid()) {
         return false;
     }
 
-    const int effectiveChannels = frame.components == 1 ? static_cast<int>(settings.size())
-                                                        : std::min(frame.components, static_cast<int>(settings.size()));
-    if (effectiveChannels <= 0) {
+    double aggregatedLow = 0.0;
+    double aggregatedHigh = 0.0;
+    bool hasSliceRange = false;
+
+    for (int zIndex = 0; zIndex < volume.depth; ++zIndex) {
+        const ChannelAutoContrastAnalysis analysis = analyzeVolumeSlice(volume, channelIndex, zIndex);
+        if (!analysis.isValid()) {
+            continue;
+        }
+
+        ChannelRenderSettings sliceSettings = settings;
+        applyAutoContrastToChannel(analysis, sliceSettings);
+
+        if (!hasSliceRange) {
+            aggregatedLow = sliceSettings.low;
+            aggregatedHigh = sliceSettings.high;
+            hasSliceRange = true;
+            continue;
+        }
+
+        aggregatedLow = std::min(aggregatedLow, sliceSettings.low);
+        aggregatedHigh = std::max(aggregatedHigh, sliceSettings.high);
+    }
+
+    if (!hasSliceRange) {
         return false;
     }
 
-    bool changed = false;
-    std::optional<ChannelAutoContrastAnalysis> sharedSingleChannelAnalysis;
-    for (int channelIndex = 0; channelIndex < effectiveChannels; ++channelIndex) {
-        auto &setting = settings[channelIndex];
-        if (!setting.autoContrast) {
-            continue;
-        }
-
-        if (frame.components == 1) {
-            if (!sharedSingleChannelAnalysis.has_value()) {
-                sharedSingleChannelAnalysis = analyzeChannel(frame, channelIndex);
-            }
-            changed = applyAutoContrastToChannel(*sharedSingleChannelAnalysis, setting) || changed;
-            continue;
-        }
-
-        changed = applyAutoContrastToChannel(analyzeChannel(frame, channelIndex), setting) || changed;
+    sanitizePercentileRange(settings);
+    const double adjustedHigh = adjustedHighValue(aggregatedLow, aggregatedHigh);
+    if (!qFuzzyCompare(settings.low + 1.0, aggregatedLow + 1.0) || !qFuzzyCompare(settings.high + 1.0, adjustedHigh + 1.0)) {
+        settings.low = aggregatedLow;
+        settings.high = adjustedHigh;
+        return true;
     }
 
-    return changed;
+    return false;
 }
 
 double FrameRenderer::percentileToValue(const ChannelAutoContrastAnalysis &analysis, double percentile)

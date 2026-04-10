@@ -1,5 +1,6 @@
 #include "ui/mainwindow.h"
 
+#include "ui/autocontrasttuningdialog.h"
 #include "ui/channelcontrolswidget.h"
 #include "ui/imageviewport.h"
 #include "ui/volumeviewport3d.h"
@@ -8,7 +9,6 @@
 #include "core/volumeutils.h"
 
 #include <QAction>
-#include <QCheckBox>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialogButtonBox>
@@ -41,7 +41,6 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRadioButton>
-#include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -222,6 +221,177 @@ void clearLayout(QLayout *layout)
     }
 }
 
+} // namespace
+
+class FileInfoDialog final : public QDialog
+{
+public:
+    explicit FileInfoDialog(QWidget *parent = nullptr)
+        : QDialog(parent)
+    {
+        setWindowTitle(tr("File Info"));
+        setModal(true);
+        resize(960, 720);
+
+        auto *layout = new QVBoxLayout(this);
+        auto *splitter = new QSplitter(Qt::Vertical, this);
+
+        auto *overviewSection = new QWidget(splitter);
+        auto *overviewLayout = new QVBoxLayout(overviewSection);
+        overviewLayout->setContentsMargins(0, 0, 0, 0);
+        overviewLayout->setSpacing(6);
+        overviewLayout->addWidget(createSectionTitle(tr("Overview"), overviewSection));
+
+        overviewTree_ = new QTreeWidget(overviewSection);
+        overviewTree_->setColumnCount(2);
+        overviewTree_->setHeaderLabels({tr("Key"), tr("Value")});
+        overviewTree_->setRootIsDecorated(true);
+        overviewTree_->setUniformRowHeights(true);
+        overviewTree_->setAlternatingRowColors(true);
+        overviewTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        overviewTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        overviewTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+        overviewLayout->addWidget(overviewTree_);
+
+        auto *metadataSection = new QWidget(splitter);
+        auto *metadataLayout = new QVBoxLayout(metadataSection);
+        metadataLayout->setContentsMargins(0, 0, 0, 0);
+        metadataLayout->setSpacing(6);
+        metadataLayout->addWidget(createSectionTitle(tr("Metadata"), metadataSection));
+
+        metadataTabs_ = new QTabWidget(metadataSection);
+        metadataLayout->addWidget(metadataTabs_);
+
+        splitter->addWidget(overviewSection);
+        splitter->addWidget(metadataSection);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
+        splitter->setSizes({220, 480});
+        layout->addWidget(splitter, 1);
+
+        auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Close, this);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttonBox);
+    }
+
+    void refresh(const DocumentInfo &info, const MetadataSection &frameMetadata, bool hasDocument)
+    {
+        setOverviewContent(info, hasDocument);
+        rebuildMetadataTabs(info, frameMetadata);
+    }
+
+private:
+    struct MetadataPaneWidgets
+    {
+        QTreeWidget *tree = nullptr;
+        QPlainTextEdit *raw = nullptr;
+    };
+
+    MetadataPaneWidgets addMetadataTab(const QString &title)
+    {
+        MetadataPaneWidgets widgets;
+
+        auto *page = new QWidget(metadataTabs_);
+        auto *layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(6);
+
+        auto *splitter = new QSplitter(Qt::Horizontal, page);
+        auto *tree = new QTreeWidget(splitter);
+        tree->setColumnCount(2);
+        tree->setHeaderLabels({tr("Key"), tr("Value")});
+        tree->setRootIsDecorated(true);
+        tree->setUniformRowHeights(true);
+        tree->setAlternatingRowColors(true);
+        tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+
+        auto *raw = new QPlainTextEdit(splitter);
+        raw->setReadOnly(true);
+
+        splitter->addWidget(tree);
+        splitter->addWidget(raw);
+        splitter->setStretchFactor(0, 2);
+        splitter->setStretchFactor(1, 3);
+        layout->addWidget(splitter);
+
+        metadataTabs_->addTab(page, title);
+        widgets.tree = tree;
+        widgets.raw = raw;
+        return widgets;
+    }
+
+    void rebuildMetadataTabs(const DocumentInfo &info, const MetadataSection &frameMetadata)
+    {
+        while (metadataTabs_->count() > 0) {
+            QWidget *page = metadataTabs_->widget(0);
+            metadataTabs_->removeTab(0);
+            delete page;
+        }
+        metadataSectionWidgets_.clear();
+
+        metadataSectionWidgets_.reserve(info.metadataSections.size());
+        for (const MetadataSection &section : info.metadataSections) {
+            metadataSectionWidgets_.push_back(addMetadataTab(section.title));
+        }
+        frameMetadataWidgets_ = addMetadataTab(tr("Frame Metadata"));
+
+        for (int index = 0; index < metadataSectionWidgets_.size() && index < info.metadataSections.size(); ++index) {
+            const MetadataSection &section = info.metadataSections.at(index);
+            setMetadataContent(metadataSectionWidgets_.at(index), section.treeValue, section.rawText);
+        }
+        setMetadataContent(frameMetadataWidgets_, frameMetadata.treeValue, frameMetadata.rawText);
+    }
+
+    void setMetadataContent(const MetadataPaneWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText)
+    {
+        populateJsonTree(widgets.tree, jsonValue);
+        widgets.raw->setPlainText(rawText);
+    }
+
+    void setOverviewContent(const DocumentInfo &info, bool hasDocument)
+    {
+        overviewTree_->clear();
+
+        const QString fileName = hasDocument ? QFileInfo(info.filePath).fileName() : tr("No file loaded");
+        addOverviewTreeRow(overviewTree_, tr("File"), fileName);
+        addOverviewTreeRow(overviewTree_,
+                           tr("Size"),
+                           QStringLiteral("%1 × %2").arg(info.frameSize.width()).arg(info.frameSize.height()));
+        addOverviewTreeRow(overviewTree_, tr("Frames"), QString::number(info.sequenceCount));
+        addOverviewTreeRow(overviewTree_, tr("Components"), QString::number(info.componentCount));
+        addOverviewTreeRow(overviewTree_,
+                           tr("Pixel Type"),
+                           info.pixelDataType.isEmpty() ? tr("Unknown") : info.pixelDataType);
+
+        auto *loopsItem = new QTreeWidgetItem(overviewTree_);
+        loopsItem->setText(0, tr("Loops"));
+        if (info.loops.isEmpty()) {
+            loopsItem->setText(1, tr("Single frame"));
+        } else {
+            loopsItem->setText(1, QStringLiteral("[%1 item%2]")
+                                      .arg(info.loops.size())
+                                      .arg(info.loops.size() == 1 ? QString() : QStringLiteral("s")));
+            for (const LoopInfo &loop : info.loops) {
+                auto *loopItem = new QTreeWidgetItem(loopsItem);
+                loopItem->setText(0, loop.label);
+                loopItem->setText(1, QStringLiteral("%1, %2 steps").arg(loop.type, QString::number(loop.size)));
+            }
+        }
+
+        overviewTree_->collapseAll();
+        overviewTree_->expandToDepth(0);
+    }
+
+    QTreeWidget *overviewTree_ = nullptr;
+    QTabWidget *metadataTabs_ = nullptr;
+    QVector<MetadataPaneWidgets> metadataSectionWidgets_;
+    MetadataPaneWidgets frameMetadataWidgets_;
+};
+
+namespace
+{
 QString formatDurationLabel(double seconds)
 {
     int remainingSeconds = qMax(0, qRound(seconds));
@@ -405,325 +575,6 @@ private:
     QTimer *estimateDebounceTimer_ = nullptr;
     MovieExportEstimate currentEstimate_;
 };
-
-class HistogramWidget : public QWidget
-{
-public:
-    explicit HistogramWidget(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        setMinimumHeight(220);
-        setMouseTracking(true);
-    }
-
-    void setHistogram(const QVector<quint64> &bins, double minimumValue, double maximumValue)
-    {
-        bins_ = bins;
-        minimumValue_ = minimumValue;
-        maximumValue_ = maximumValue;
-        update();
-    }
-
-    void setLevels(double lowValue, double highValue)
-    {
-        lowValue_ = lowValue;
-        highValue_ = highValue;
-        update();
-    }
-
-    void setLevelsChangedCallback(std::function<void(double, double, bool)> callback)
-    {
-        levelsChangedCallback_ = std::move(callback);
-    }
-
-protected:
-    void paintEvent(QPaintEvent *event) override
-    {
-        QWidget::paintEvent(event);
-
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.fillRect(rect(), palette().window());
-
-        const QRectF plot = plotRect();
-        painter.fillRect(plot, palette().base());
-        painter.setPen(palette().mid().color());
-        painter.drawRect(plot);
-
-        if (bins_.isEmpty()) {
-            painter.setPen(palette().text().color());
-            painter.drawText(plot, Qt::AlignCenter, tr("Histogram unavailable"));
-            return;
-        }
-
-        const quint64 maxCount = qMax<quint64>(1, *std::max_element(bins_.cbegin(), bins_.cend()));
-        const double barWidth = plot.width() / bins_.size();
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(90, 150, 210));
-        for (int index = 0; index < bins_.size(); ++index) {
-            const double barHeight = plot.height() * (static_cast<double>(bins_.at(index)) / maxCount);
-            const QRectF bar(plot.left() + (index * barWidth),
-                             plot.bottom() - barHeight,
-                             qMax(1.0, barWidth - 1.0),
-                             barHeight);
-            painter.drawRect(bar);
-        }
-
-        painter.setPen(QPen(QColor(230, 140, 40), 2.0));
-        painter.drawLine(QPointF(valueToX(lowValue_), plot.top()), QPointF(valueToX(lowValue_), plot.bottom()));
-        painter.setPen(QPen(QColor(40, 180, 180), 2.0));
-        painter.drawLine(QPointF(valueToX(highValue_), plot.top()), QPointF(valueToX(highValue_), plot.bottom()));
-
-        painter.setPen(palette().text().color());
-        painter.drawText(QRectF(plot.left(), plot.bottom() + 6.0, plot.width() / 2.0, 18.0),
-                         Qt::AlignLeft | Qt::AlignVCenter,
-                         QString::number(minimumValue_, 'g', 6));
-        painter.drawText(QRectF(plot.center().x(), plot.bottom() + 6.0, plot.width() / 2.0, 18.0),
-                         Qt::AlignRight | Qt::AlignVCenter,
-                         QString::number(maximumValue_, 'g', 6));
-    }
-
-    void mousePressEvent(QMouseEvent *event) override
-    {
-        if (event->button() != Qt::LeftButton || bins_.isEmpty()) {
-            QWidget::mousePressEvent(event);
-            return;
-        }
-
-        dragHandle_ = pickHandle(event->position().x());
-        updateDraggedLevel(event->position().x(), false);
-        event->accept();
-    }
-
-    void mouseMoveEvent(QMouseEvent *event) override
-    {
-        if (dragHandle_ == DragHandle::None) {
-            QWidget::mouseMoveEvent(event);
-            return;
-        }
-
-        updateDraggedLevel(event->position().x(), false);
-        event->accept();
-    }
-
-    void mouseReleaseEvent(QMouseEvent *event) override
-    {
-        if (event->button() == Qt::LeftButton && dragHandle_ != DragHandle::None) {
-            updateDraggedLevel(event->position().x(), true);
-            dragHandle_ = DragHandle::None;
-            event->accept();
-            return;
-        }
-
-        QWidget::mouseReleaseEvent(event);
-    }
-
-private:
-    enum class DragHandle
-    {
-        None,
-        Low,
-        High
-    };
-
-    [[nodiscard]] QRectF plotRect() const
-    {
-        const QRect area = contentsRect();
-        return QRectF(area.adjusted(12, 12, -12, -28));
-    }
-
-    [[nodiscard]] double valueToX(double value) const
-    {
-        const QRectF plot = plotRect();
-        if (plot.width() <= 0.0) {
-            return plot.left();
-        }
-
-        if (qFuzzyCompare(minimumValue_ + 1.0, maximumValue_ + 1.0)) {
-            return plot.center().x();
-        }
-
-        const double normalized = std::clamp((value - minimumValue_) / (maximumValue_ - minimumValue_), 0.0, 1.0);
-        return plot.left() + (normalized * plot.width());
-    }
-
-    [[nodiscard]] double xToValue(double x) const
-    {
-        const QRectF plot = plotRect();
-        if (plot.width() <= 0.0 || qFuzzyCompare(minimumValue_ + 1.0, maximumValue_ + 1.0)) {
-            return minimumValue_;
-        }
-
-        const double normalized = std::clamp((x - plot.left()) / plot.width(), 0.0, 1.0);
-        return minimumValue_ + (normalized * (maximumValue_ - minimumValue_));
-    }
-
-    [[nodiscard]] DragHandle pickHandle(double x) const
-    {
-        const double lowDistance = std::abs(x - valueToX(lowValue_));
-        const double highDistance = std::abs(x - valueToX(highValue_));
-        return lowDistance <= highDistance ? DragHandle::Low : DragHandle::High;
-    }
-
-    void updateDraggedLevel(double x, bool commitPreview)
-    {
-        const double value = xToValue(x);
-        if (dragHandle_ == DragHandle::Low) {
-            lowValue_ = std::min(value, highValue_);
-        } else if (dragHandle_ == DragHandle::High) {
-            highValue_ = std::max(value, lowValue_);
-        }
-
-        update();
-        if (levelsChangedCallback_) {
-            levelsChangedCallback_(lowValue_, highValue_, commitPreview);
-        }
-    }
-
-    QVector<quint64> bins_;
-    double minimumValue_ = 0.0;
-    double maximumValue_ = 1.0;
-    double lowValue_ = 0.0;
-    double highValue_ = 1.0;
-    DragHandle dragHandle_ = DragHandle::None;
-    std::function<void(double, double, bool)> levelsChangedCallback_;
-};
-
-class AutoContrastTuningDialog : public QDialog
-{
-public:
-    AutoContrastTuningDialog(const QString &channelName,
-                             const ChannelAutoContrastAnalysis &analysis,
-                             const ChannelRenderSettings &initialSettings,
-                             QWidget *parent = nullptr)
-        : QDialog(parent)
-        , analysis_(analysis)
-        , settings_(initialSettings)
-    {
-        setWindowTitle(tr("Tune Live Auto - %1").arg(channelName));
-        setModal(true);
-        resize(620, 0);
-
-        auto *layout = new QVBoxLayout(this);
-        auto *intro = new QLabel(tr("Adjust the min and max percentiles for this channel. The histogram uses a sampled snapshot of the current frame."), this);
-        intro->setWordWrap(true);
-        layout->addWidget(intro);
-
-        histogramWidget_ = new HistogramWidget(this);
-        histogramWidget_->setHistogram(analysis_.histogramBins, analysis_.minimumValue, analysis_.maximumValue);
-        layout->addWidget(histogramWidget_);
-
-        auto *inputsRow = new QWidget(this);
-        auto *inputsLayout = new QHBoxLayout(inputsRow);
-        inputsLayout->setContentsMargins(0, 0, 0, 0);
-        inputsLayout->setSpacing(8);
-
-        auto *minLabel = new QLabel(tr("Min percentile"), inputsRow);
-        minPercentileSpinBox_ = new QDoubleSpinBox(inputsRow);
-        minPercentileSpinBox_->setDecimals(3);
-        minPercentileSpinBox_->setRange(0.0, 100.0);
-        minPercentileSpinBox_->setSingleStep(0.1);
-
-        auto *maxLabel = new QLabel(tr("Max percentile"), inputsRow);
-        maxPercentileSpinBox_ = new QDoubleSpinBox(inputsRow);
-        maxPercentileSpinBox_->setDecimals(3);
-        maxPercentileSpinBox_->setRange(0.0, 100.0);
-        maxPercentileSpinBox_->setSingleStep(0.1);
-
-        thresholdLabel_ = new QLabel(this);
-
-        inputsLayout->addWidget(minLabel);
-        inputsLayout->addWidget(minPercentileSpinBox_, 1);
-        inputsLayout->addWidget(maxLabel);
-        inputsLayout->addWidget(maxPercentileSpinBox_, 1);
-        layout->addWidget(inputsRow);
-        layout->addWidget(thresholdLabel_);
-
-        auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
-        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        layout->addWidget(buttonBox);
-
-        connect(minPercentileSpinBox_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
-            setPercentiles(value, settings_.highPercentile, true);
-        });
-        connect(maxPercentileSpinBox_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
-            setPercentiles(settings_.lowPercentile, value, true);
-        });
-
-        histogramWidget_->setLevelsChangedCallback([this](double lowValue, double highValue, bool commitPreview) {
-            const double lowPercentile = FrameRenderer::valueToPercentile(analysis_, lowValue);
-            const double highPercentile = FrameRenderer::valueToPercentile(analysis_, highValue);
-            setPercentiles(lowPercentile, highPercentile, commitPreview);
-        });
-
-        setPercentiles(settings_.lowPercentile, settings_.highPercentile, false);
-    }
-
-    void setPreviewCallback(std::function<void(const ChannelRenderSettings &)> callback)
-    {
-        previewCallback_ = std::move(callback);
-    }
-
-    [[nodiscard]] ChannelRenderSettings currentSettings() const
-    {
-        return settings_;
-    }
-
-private:
-    void setPercentiles(double lowPercentile, double highPercentile, bool emitPreview)
-    {
-        sanitizePercentiles(lowPercentile, highPercentile);
-        settings_.lowPercentile = lowPercentile;
-        settings_.highPercentile = highPercentile;
-
-        const QSignalBlocker minBlocker(minPercentileSpinBox_);
-        const QSignalBlocker maxBlocker(maxPercentileSpinBox_);
-        minPercentileSpinBox_->setValue(settings_.lowPercentile);
-        maxPercentileSpinBox_->setValue(settings_.highPercentile);
-
-        FrameRenderer::applyAutoContrastToChannel(analysis_, settings_);
-        histogramWidget_->setLevels(settings_.low, settings_.high);
-        thresholdLabel_->setText(tr("Current thresholds: low=%1   high=%2")
-                                     .arg(QString::number(settings_.low, 'g', 6),
-                                          QString::number(settings_.high, 'g', 6)));
-
-        if (emitPreview && previewCallback_) {
-            previewCallback_(settings_);
-        }
-    }
-
-    void sanitizePercentiles(double &lowPercentile, double &highPercentile) const
-    {
-        constexpr double minimumGap = 0.001;
-
-        lowPercentile = std::clamp(lowPercentile, 0.0, 100.0);
-        highPercentile = std::clamp(highPercentile, 0.0, 100.0);
-
-        if (highPercentile - lowPercentile >= minimumGap) {
-            return;
-        }
-
-        if (lowPercentile >= 100.0) {
-            lowPercentile = 100.0 - minimumGap;
-            highPercentile = 100.0;
-            return;
-        }
-
-        highPercentile = std::min(100.0, lowPercentile + minimumGap);
-        if (highPercentile - lowPercentile < minimumGap) {
-            lowPercentile = std::max(0.0, highPercentile - minimumGap);
-        }
-    }
-
-    ChannelAutoContrastAnalysis analysis_;
-    ChannelRenderSettings settings_;
-    HistogramWidget *histogramWidget_ = nullptr;
-    QDoubleSpinBox *minPercentileSpinBox_ = nullptr;
-    QDoubleSpinBox *maxPercentileSpinBox_ = nullptr;
-    QLabel *thresholdLabel_ = nullptr;
-    std::function<void(const ChannelRenderSettings &)> previewCallback_;
-};
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -736,10 +587,8 @@ MainWindow::MainWindow(QWidget *parent)
     buildMenus();
 
     infoStatusLabel_ = new QLabel(this);
-    zoomStatusLabel_ = new QLabel(tr("Fit"), this);
     pixelStatusLabel_ = new QLabel(this);
     statusBar()->addWidget(infoStatusLabel_, 1);
-    statusBar()->addPermanentWidget(zoomStatusLabel_);
     statusBar()->addPermanentWidget(pixelStatusLabel_, 1);
 
     connect(&controller_, &DocumentController::documentChanged, this, &MainWindow::updateDocumentUi);
@@ -753,7 +602,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&controller_, &DocumentController::statusTextChanged, this, &MainWindow::updateStatusMessage);
 
     connect(imageViewport_, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updateHoveredPixel);
-    connect(imageViewport_, &ImageViewport::zoomChanged, this, &MainWindow::updateZoomLabel);
     connect(imageViewport_, &ImageViewport::saveImageRequested, this, &MainWindow::saveCurrentFrameAs);
     connect(imageViewport_, &ImageViewport::exportRoiRequested, this, &MainWindow::saveCurrentRoiAs);
     connect(imageViewport_, &ImageViewport::exportMovieRequested, this, &MainWindow::exportMovieAs);
@@ -761,14 +609,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
             &controller_, qOverload<int, const ChannelRenderSettings &>(&DocumentController::setChannelSettings));
-    connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastRequested,
-            this, &MainWindow::autoContrastChannelForActiveView);
+    connect(channelControlsWidget_, &ChannelControlsWidget::liveAutoChanged,
+            this, &MainWindow::setLiveAutoForAllChannels);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested,
             this, &MainWindow::openAutoContrastTuningDialog);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastAllRequested,
             this, &MainWindow::autoContrastAllForActiveView);
 
-    connect(volumeViewCheck_, &QCheckBox::toggled, this, &MainWindow::onVolumeViewCheckToggled);
+    connect(view2dButton_, &QPushButton::clicked, this, [this]() { setVolumeViewActive(false); });
+    connect(view3dButton_, &QPushButton::clicked, this, [this]() { setVolumeViewActive(true); });
     connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &MainWindow::handleVolumeLoadFinished);
 
     updateDocumentUi();
@@ -892,39 +741,80 @@ void MainWindow::exportRoiMovieAs()
     exportMovieSelection(ExportScope::Roi);
 }
 
-void MainWindow::onVolumeViewCheckToggled(bool checked)
+void MainWindow::showFileInfoDialog()
 {
-    applyVolumeViewMode(checked);
+    if (!fileInfoDialog_) {
+        fileInfoDialog_ = new FileInfoDialog(this);
+    }
+
+    updateFileInfoDialog();
+    fileInfoDialog_->exec();
+}
+
+void MainWindow::updateFileInfoDialog()
+{
+    if (!fileInfoDialog_) {
+        return;
+    }
+
+    fileInfoDialog_->refresh(controller_.documentInfo(),
+                             controller_.currentFrameMetadataSection(),
+                             controller_.hasDocument());
+}
+
+void MainWindow::setVolumeViewActive(bool active)
+{
+    if (active && !hasUsableZStack()) {
+        return;
+    }
+
+    applyVolumeViewMode(active);
+    updateViewModeButtons();
+}
+
+void MainWindow::updateViewModeButtons()
+{
+    const bool volumeActive = isVolumeViewActive();
+
+    if (view2dButton_) {
+        const QSignalBlocker blocker(view2dButton_);
+        view2dButton_->setChecked(!volumeActive);
+    }
+    if (view3dButton_) {
+        const QSignalBlocker blocker(view3dButton_);
+        view3dButton_->setChecked(volumeActive);
+        view3dButton_->setEnabled(!movieExportInProgress_ && hasUsableZStack());
+    }
+    if (view2dButton_) {
+        view2dButton_->setEnabled(!movieExportInProgress_);
+    }
 }
 
 void MainWindow::openAutoContrastTuningDialog(int channelIndex)
 {
+    if (isVolumeViewActive()) {
+        statusBar()->showMessage(tr("Live auto percentile tuning is only available in 2D mode."), 5000);
+        return;
+    }
+
     const QVector<ChannelRenderSettings> settings = controller_.channelSettings();
     if (channelIndex < 0 || channelIndex >= settings.size()) {
         return;
     }
 
-    ChannelAutoContrastAnalysis analysis;
-    if (isVolumeViewActive()) {
-        if (!cachedVolume_.isValid()) {
-            statusBar()->showMessage(tr("Load the 3D volume before tuning volume auto contrast."), 5000);
-            return;
-        }
-        analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
-    } else {
-        const RawFrame &rawFrame = controller_.currentRawFrame();
-        if (!rawFrame.isValid()) {
-            statusBar()->showMessage(tr("Load a frame before tuning live auto contrast."), 5000);
-            return;
-        }
-        analysis = FrameRenderer::analyzeChannel(rawFrame, channelIndex);
+    const RawFrame &rawFrame = controller_.currentRawFrame();
+    if (!rawFrame.isValid()) {
+        statusBar()->showMessage(tr("Load a frame before tuning live auto contrast."), 5000);
+        return;
     }
+
+    const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(rawFrame, channelIndex);
+    const QString description = tr("The histogram uses a sampled snapshot of the current frame.");
 
     if (!analysis.isValid()) {
         QMessageBox::warning(this,
                              tr("Live Auto"),
-                             isVolumeViewActive() ? tr("A histogram could not be prepared for the current 3D volume.")
-                                                  : tr("A histogram could not be prepared for the current frame."));
+                             tr("A histogram could not be prepared for the current frame."));
         return;
     }
 
@@ -934,12 +824,13 @@ void MainWindow::openAutoContrastTuningDialog(int channelIndex)
                                     : tr("Channel %1").arg(channelIndex + 1);
     const ChannelRenderSettings originalSettings = settings.at(channelIndex);
 
-    AutoContrastTuningDialog dialog(channelName, analysis, originalSettings, this);
+    AutoContrastTuningDialog dialog(channelName, description, analysis, originalSettings, this);
     dialog.setPreviewCallback([this, channelIndex](const ChannelRenderSettings &previewSettings) {
         controller_.setChannelSettings(channelIndex, previewSettings);
     });
 
     if (dialog.exec() == QDialog::Accepted) {
+        controller_.setChannelSettings(channelIndex, dialog.currentSettings());
         return;
     }
 
@@ -1070,6 +961,7 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     settings.sourcePath = controller_.currentPath();
     settings.fixedCoordinates = controller_.coordinateState().values;
     settings.channelSettings = controller_.channelSettings();
+    settings.liveAutoEnabled = controller_.liveAutoEnabled();
     settings.timeLoopIndex = timeLoopIndex;
     settings.outputSize = scope == ExportScope::Roi && imageViewport_->hasRoi()
                               ? imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height)).size()
@@ -1189,9 +1081,7 @@ void MainWindow::exportVolumeMovie()
     settings.sourcePath = controller_.currentPath();
     settings.fixedCoordinates = controller_.coordinateState().values;
     settings.channelSettings = controller_.channelSettings();
-    for (ChannelRenderSettings &channelSettings : settings.channelSettings) {
-        channelSettings.autoContrast = false;
-    }
+    settings.liveAutoEnabled = false;
     settings.timeLoopIndex = timeLoopIndex;
     settings.outputSize = sampleImage.size();
     settings.fps = 10.0;
@@ -1203,9 +1093,7 @@ void MainWindow::exportVolumeMovie()
     }
 
     settings = dialog.currentSettings();
-    for (ChannelRenderSettings &channelSettings : settings.channelSettings) {
-        channelSettings.autoContrast = false;
-    }
+    settings.liveAutoEnabled = false;
 
     QString selectedPath = QFileDialog::getSaveFileName(this,
                                                         tr("Save 3D Movie"),
@@ -1239,6 +1127,7 @@ void MainWindow::exportVolumeMovie()
 void MainWindow::updateDocumentUi()
 {
     cachedVolume_ = {};
+    volumeViewportHasVolume_ = false;
     volumeLoadGeneration_ = 0;
     documentZLoopIndex_ = VolumeUtils::findZLoopIndex(controller_.documentInfo());
 
@@ -1247,15 +1136,11 @@ void MainWindow::updateDocumentUi()
     rebuildNavigatorControls();
 
     const bool hasZ = hasUsableZStack();
-    {
-        QSignalBlocker bv(volumeViewCheck_);
-        volumeViewCheck_->setChecked(false);
-        viewerStack_->setCurrentIndex(0);
-    }
-
-    volumeViewCheck_->setVisible(hasZ);
+    viewerStack_->setCurrentIndex(0);
     channelControlsWidget_->setChannels(controller_.documentInfo().channels, controller_.channelSettings());
+    channelControlsWidget_->setLiveAutoEnabled(controller_.liveAutoEnabled());
     channelControlsWidget_->setLiveAutoInteractive(!isVolumeViewActive());
+    channelControlsWidget_->setAutoContrastTuningEnabled(!isVolumeViewActive());
     updateCoordinateUi();
     updateChannelUi();
     updateStaticMetadataUi();
@@ -1264,10 +1149,14 @@ void MainWindow::updateDocumentUi()
     updateInfoLabel();
     applyZLoopNavigatorLock();
 
-    volumeStatusLabel_->setText(hasZ ? tr("Open 3D view to load the z-stack.") : QString());
-    volumeCoordsLabel_->clear();
     volumeFitButton_->setEnabled(false);
     volumeResetButton_->setEnabled(false);
+    if (viewModeControl_) {
+        viewModeControl_->setVisible(hasZ);
+    }
+    volumeFitButton_->setVisible(hasZ);
+    volumeResetButton_->setVisible(hasZ);
+    updateViewModeButtons();
 }
 
 void MainWindow::updateCoordinateUi()
@@ -1286,6 +1175,7 @@ void MainWindow::updateCoordinateUi()
 void MainWindow::updateChannelUi()
 {
     channelControlsWidget_->updateSettings(controller_.channelSettings());
+    channelControlsWidget_->setLiveAutoEnabled(controller_.liveAutoEnabled());
     syncVolumeViewportChannelSettings();
 }
 
@@ -1293,11 +1183,8 @@ void MainWindow::updateFrameUi()
 {
     imageViewport_->setImage(controller_.renderedFrame().image);
     updateInfoLabel();
-    if (timePlaybackActive_ && timePlaybackAwaitingFrame_) {
-        timePlaybackAwaitingFrame_ = false;
-        if (!timePlaybackTimeValues_.isEmpty()) {
-            timePlaybackNextFrameIndex_ = (timePlaybackNextFrameIndex_ + 1) % timePlaybackTimeValues_.size();
-        }
+    if (!isVolumeViewActive() && timePlaybackActive_ && timePlaybackAwaitingFrame_) {
+        completeTimePlaybackStep();
     }
     if (movieExportInProgress_ && movieExportAwaitingFrame_) {
         prepareCurrentMovieExportFrame();
@@ -1311,20 +1198,12 @@ void MainWindow::updateMetadataUi()
 
 void MainWindow::updateStaticMetadataUi()
 {
-    const DocumentInfo &info = controller_.documentInfo();
-
-    setOverviewContent(info);
-    rebuildMetadataTabs();
-    for (int index = 0; index < metadataSectionWidgets_.size() && index < info.metadataSections.size(); ++index) {
-        const MetadataSection &section = info.metadataSections.at(index);
-        setMetadataContent(metadataSectionWidgets_.at(index), section.treeValue, section.rawText);
-    }
+    updateFileInfoDialog();
 }
 
 void MainWindow::updateFrameMetadataUi()
 {
-    const MetadataSection &metadataSection = controller_.currentFrameMetadataSection();
-    setMetadataContent(frameMetadataWidgets_, metadataSection.treeValue, metadataSection.rawText);
+    updateFileInfoDialog();
 }
 
 void MainWindow::showErrorMessage(const QString &message)
@@ -1364,11 +1243,6 @@ void MainWindow::updateHoveredPixel(const QPoint &pixelPosition, bool insideImag
     pixelStatusLabel_->setText(insideImage ? controller_.pixelInfoAt(pixelPosition) : QString());
 }
 
-void MainWindow::updateZoomLabel(double zoomFactor, bool fitToWindow)
-{
-    zoomStatusLabel_->setText(fitToWindow ? tr("Fit") : tr("%1%").arg(zoomFactor * 100.0, 0, 'f', 1));
-}
-
 void MainWindow::buildMenus()
 {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
@@ -1379,6 +1253,10 @@ void MainWindow::buildMenus()
     reloadAction_ = fileMenu->addAction(tr("&Reload Frame"));
     reloadAction_->setShortcut(tr("F5"));
     connect(reloadAction_, &QAction::triggered, &controller_, &DocumentController::reloadCurrentFrame);
+
+    fileInfoAction_ = fileMenu->addAction(tr("File &Info…"));
+    fileInfoAction_->setShortcut(tr("Ctrl+I"));
+    connect(fileInfoAction_, &QAction::triggered, this, &MainWindow::showFileInfoDialog);
 
     fileMenu->addSeparator();
     auto *exportMenu = fileMenu->addMenu(tr("&Export"));
@@ -1422,138 +1300,118 @@ void MainWindow::buildMenus()
 void MainWindow::buildCentralUi()
 {
     auto *central = new QWidget(this);
-    auto *layout = new QHBoxLayout(central);
+    auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
-    auto *mainSplitter = new QSplitter(Qt::Horizontal, central);
-
-    auto *viewerPane = new QWidget(mainSplitter);
-    auto *viewerLayout = new QVBoxLayout(viewerPane);
-    viewerLayout->setContentsMargins(0, 0, 0, 0);
-    viewerLayout->setSpacing(8);
-
-    auto *navigationSection = new QWidget(viewerPane);
+    auto *navigationSection = new QWidget(central);
     auto *navigationLayout = new QVBoxLayout(navigationSection);
     navigationLayout->setContentsMargins(0, 0, 0, 0);
     navigationLayout->setSpacing(4);
     navigationLayout->addWidget(createSectionTitle(tr("Navigation"), navigationSection));
 
-    auto *navigatorScrollArea = new QScrollArea(navigationSection);
-    navigatorScrollArea->setWidgetResizable(true);
-    navigatorContainer_ = new QWidget(navigatorScrollArea);
+    navigatorContainer_ = new QWidget(navigationSection);
     navigatorRowsLayout_ = new QVBoxLayout(navigatorContainer_);
     navigatorRowsLayout_->setContentsMargins(0, 0, 0, 0);
     navigatorRowsLayout_->setSpacing(6);
-    navigatorEmptyLabel_ = new QLabel(tr("Open a file to browse time, z, or position loops."), navigatorContainer_);
+    navigatorEmptyLabel_ = new QLabel(QString(), navigatorContainer_);
     navigatorEmptyLabel_->setWordWrap(true);
     navigatorRowsLayout_->addWidget(navigatorEmptyLabel_);
     navigatorRowsLayout_->addStretch(1);
-    navigatorScrollArea->setWidget(navigatorContainer_);
-    navigationLayout->addWidget(navigatorScrollArea);
+    navigationLayout->addWidget(navigatorContainer_);
 
-    auto *viewModeRow = new QWidget(viewerPane);
+    auto *contentLayout = new QHBoxLayout();
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(8);
+
+    auto *canvasPane = new QWidget(central);
+    auto *canvasLayout = new QVBoxLayout(canvasPane);
+    canvasLayout->setContentsMargins(0, 0, 0, 0);
+    canvasLayout->setSpacing(4);
+    canvasLayout->addWidget(createSectionTitle(tr("Viewer"), canvasPane));
+
+    auto *viewModeRow = new QWidget(canvasPane);
     auto *viewModeLayout = new QHBoxLayout(viewModeRow);
     viewModeLayout->setContentsMargins(0, 0, 0, 0);
-    volumeViewCheck_ = new QCheckBox(tr("3D view"), viewModeRow);
-    volumeViewCheck_->setVisible(false);
-    viewModeLayout->addWidget(volumeViewCheck_);
-    viewModeLayout->addStretch(1);
+    viewModeLayout->setSpacing(8);
 
-    imageViewport_ = new ImageViewport(viewerPane);
+    viewModeControl_ = new QWidget(viewModeRow);
+    viewModeControl_->setObjectName(QStringLiteral("viewModeSwitch"));
+    viewModeControl_->setStyleSheet(QStringLiteral(
+        "#viewModeSwitch {"
+        " border: 1px solid palette(mid);"
+        " border-radius: 11px;"
+        " background: palette(base);"
+        "}"
+        "#viewModeSwitch QPushButton {"
+        " border: 0;"
+        " border-radius: 10px;"
+        " padding: 6px 14px;"
+        "}"
+        "#viewModeSwitch QPushButton:checked {"
+        " background: palette(highlight);"
+        " color: palette(highlighted-text);"
+        " font-weight: 600;"
+        "}"));
+    auto *viewModeSwitchLayout = new QHBoxLayout(viewModeControl_);
+    viewModeSwitchLayout->setContentsMargins(2, 2, 2, 2);
+    viewModeSwitchLayout->setSpacing(2);
 
-    volumePage_ = new QWidget(viewerPane);
-    auto *volumeOuterLayout = new QVBoxLayout(volumePage_);
-    volumeOuterLayout->setContentsMargins(0, 0, 0, 0);
-    volumeOuterLayout->setSpacing(8);
+    view2dButton_ = new QPushButton(tr("2D"), viewModeControl_);
+    view2dButton_->setCheckable(true);
+    view2dButton_->setAutoExclusive(true);
+    view3dButton_ = new QPushButton(tr("3D"), viewModeControl_);
+    view3dButton_->setCheckable(true);
+    view3dButton_->setAutoExclusive(true);
+    viewModeSwitchLayout->addWidget(view2dButton_);
+    viewModeSwitchLayout->addWidget(view3dButton_);
+    viewModeLayout->addWidget(viewModeControl_);
 
-    auto *volumeHeader = new QWidget(volumePage_);
-    auto *volumeHeaderLayout = new QHBoxLayout(volumeHeader);
-    volumeHeaderLayout->setContentsMargins(0, 0, 0, 0);
-    volumeHeaderLayout->setSpacing(8);
-
-    volumeStatusLabel_ = new QLabel(tr("Loading 3D volume…"), volumeHeader);
-    volumeCoordsLabel_ = new QLabel(volumeHeader);
-    volumeCoordsLabel_->setWordWrap(true);
-    volumeFitButton_ = new QPushButton(tr("Fit To Volume"), volumeHeader);
+    volumeFitButton_ = new QPushButton(tr("Fit To Volume"), viewModeRow);
     volumeFitButton_->setEnabled(false);
     volumeFitButton_->setToolTip(tr("Keep the current angle and reframe the visible volume to fill the viewport."));
-    volumeResetButton_ = new QPushButton(tr("Reset View"), volumeHeader);
+    volumeResetButton_ = new QPushButton(tr("Reset View"), viewModeRow);
     volumeResetButton_->setEnabled(false);
     volumeResetButton_->setToolTip(tr("Restore the default camera angle and refit the volume."));
+    viewModeLayout->addWidget(volumeFitButton_);
+    viewModeLayout->addWidget(volumeResetButton_);
+    viewModeLayout->addStretch(1);
 
-    volumeHeaderLayout->addWidget(volumeStatusLabel_, 1);
-    volumeHeaderLayout->addWidget(volumeCoordsLabel_, 2);
-    volumeHeaderLayout->addWidget(volumeFitButton_);
-    volumeHeaderLayout->addWidget(volumeResetButton_);
+    imageViewport_ = new ImageViewport(canvasPane);
+
+    volumePage_ = new QWidget(canvasPane);
+    auto *volumeOuterLayout = new QVBoxLayout(volumePage_);
+    volumeOuterLayout->setContentsMargins(0, 0, 0, 0);
+    volumeOuterLayout->setSpacing(0);
 
     volumeViewport_ = new VolumeViewport3D(volumePage_);
-    volumeOuterLayout->addWidget(volumeHeader);
     volumeOuterLayout->addWidget(volumeViewport_, 1);
 
     connect(volumeFitButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::fitToVolume);
     connect(volumeResetButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::resetView);
 
-    viewerStack_ = new QStackedWidget(viewerPane);
+    viewerStack_ = new QStackedWidget(canvasPane);
     viewerStack_->addWidget(imageViewport_);
     viewerStack_->addWidget(volumePage_);
 
-    viewerLayout->addWidget(navigationSection, 0);
-    viewerLayout->addWidget(viewModeRow, 0);
-    viewerLayout->addWidget(viewerStack_, 1);
+    canvasLayout->addWidget(viewModeRow, 0);
+    canvasLayout->addWidget(viewerStack_, 1);
 
-    auto *sidebarPane = new QWidget(mainSplitter);
-    sidebarPane->setMinimumWidth(320);
-    auto *sidebarLayout = new QVBoxLayout(sidebarPane);
-    sidebarLayout->setContentsMargins(0, 0, 0, 0);
-    sidebarLayout->setSpacing(8);
-
-    metadataOverviewTree_ = new QTreeWidget(sidebarPane);
-    metadataOverviewTree_->setColumnCount(2);
-    metadataOverviewTree_->setHeaderLabels({tr("Key"), tr("Value")});
-    metadataOverviewTree_->setRootIsDecorated(true);
-    metadataOverviewTree_->setUniformRowHeights(true);
-    metadataOverviewTree_->setAlternatingRowColors(true);
-    metadataOverviewTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    metadataOverviewTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    metadataOverviewTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-
-    auto *overviewSection = new QWidget(sidebarPane);
-    auto *overviewLayout = new QVBoxLayout(overviewSection);
-    overviewLayout->setContentsMargins(0, 0, 0, 0);
-    overviewLayout->setSpacing(4);
-    overviewLayout->addWidget(createSectionTitle(tr("Overview"), overviewSection));
-    overviewLayout->addWidget(metadataOverviewTree_);
-
-    channelControlsWidget_ = new ChannelControlsWidget(sidebarPane);
-    auto *channelsSection = new QWidget(sidebarPane);
+    auto *channelsSection = new QWidget(central);
     auto *channelsLayout = new QVBoxLayout(channelsSection);
     channelsLayout->setContentsMargins(0, 0, 0, 0);
     channelsLayout->setSpacing(4);
+    channelControlsWidget_ = new ChannelControlsWidget(channelsSection);
     channelsLayout->addWidget(createSectionTitle(tr("Channels"), channelsSection));
     channelsLayout->addWidget(channelControlsWidget_);
+    channelsSection->setMinimumWidth(320);
+    channelsSection->setMaximumWidth(420);
 
-    metadataTabs_ = new QTabWidget(sidebarPane);
-    rebuildMetadataTabs();
+    contentLayout->addWidget(canvasPane, 1);
+    contentLayout->addWidget(channelsSection, 0);
 
-    auto *metadataSection = new QWidget(sidebarPane);
-    auto *metadataLayout = new QVBoxLayout(metadataSection);
-    metadataLayout->setContentsMargins(0, 0, 0, 0);
-    metadataLayout->setSpacing(4);
-    metadataLayout->addWidget(createSectionTitle(tr("Metadata"), metadataSection));
-    metadataLayout->addWidget(metadataTabs_);
-
-    sidebarLayout->addWidget(overviewSection, 0);
-    sidebarLayout->addWidget(channelsSection, 0);
-    sidebarLayout->addWidget(metadataSection, 1);
-
-    mainSplitter->addWidget(viewerPane);
-    mainSplitter->addWidget(sidebarPane);
-    mainSplitter->setStretchFactor(0, 1);
-    mainSplitter->setStretchFactor(1, 0);
-    mainSplitter->setSizes({1000, 380});
-
-    layout->addWidget(mainSplitter, 1);
+    layout->addWidget(navigationSection, 0);
+    layout->addLayout(contentLayout, 1);
     setCentralWidget(central);
 }
 
@@ -1564,6 +1422,14 @@ void MainWindow::rebuildNavigatorControls()
     timePlaybackLoopIndex_ = -1;
     clearLayout(navigatorRowsLayout_);
     loopControls_.clear();
+
+    if (!controller_.hasDocument()) {
+        navigatorEmptyLabel_ = new QLabel(QString(), navigatorContainer_);
+        navigatorEmptyLabel_->setWordWrap(true);
+        navigatorRowsLayout_->addWidget(navigatorEmptyLabel_);
+        navigatorRowsLayout_->addStretch(1);
+        return;
+    }
 
     const DocumentInfo &info = controller_.documentInfo();
     if (info.loops.isEmpty()) {
@@ -1778,83 +1644,12 @@ void MainWindow::advanceTimePlayback()
     controller_.setCoordinateValue(timePlaybackLoopIndex_, nextTimeValue);
 }
 
-MainWindow::MetadataWidgets MainWindow::addMetadataTab(const QString &title)
+void MainWindow::completeTimePlaybackStep()
 {
-    auto *page = new QWidget(metadataTabs_);
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(6, 6, 6, 6);
-    layout->setSpacing(6);
-
-    MetadataWidgets widgets;
-    auto *splitter = new QSplitter(Qt::Vertical, page);
-    auto *tree = new QTreeWidget(splitter);
-    tree->setColumnCount(2);
-    tree->setHeaderLabels({tr("Key"), tr("Value")});
-    tree->setRootIsDecorated(true);
-    tree->setUniformRowHeights(true);
-    tree->setAlternatingRowColors(true);
-    tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    auto *raw = new QPlainTextEdit(splitter);
-    raw->setReadOnly(true);
-
-    splitter->addWidget(tree);
-    splitter->addWidget(raw);
-    splitter->setStretchFactor(0, 2);
-    splitter->setStretchFactor(1, 3);
-    layout->addWidget(splitter);
-
-    metadataTabs_->addTab(page, title);
-    widgets.tree = tree;
-    widgets.raw = raw;
-    return widgets;
-}
-
-void MainWindow::setMetadataContent(const MetadataWidgets &widgets, const QJsonValue &jsonValue, const QString &rawText)
-{
-    populateJsonTree(widgets.tree, jsonValue);
-    widgets.raw->setPlainText(rawText);
-}
-
-void MainWindow::setOverviewContent(const DocumentInfo &info)
-{
-    if (!metadataOverviewTree_) {
-        return;
+    timePlaybackAwaitingFrame_ = false;
+    if (!timePlaybackTimeValues_.isEmpty()) {
+        timePlaybackNextFrameIndex_ = (timePlaybackNextFrameIndex_ + 1) % timePlaybackTimeValues_.size();
     }
-
-    metadataOverviewTree_->clear();
-
-    const QString fileName = controller_.hasDocument()
-                                 ? QFileInfo(info.filePath).fileName()
-                                 : tr("No file loaded");
-    addOverviewTreeRow(metadataOverviewTree_, tr("File"), fileName);
-    addOverviewTreeRow(metadataOverviewTree_,
-                       tr("Size"),
-                       QStringLiteral("%1 × %2").arg(info.frameSize.width()).arg(info.frameSize.height()));
-    addOverviewTreeRow(metadataOverviewTree_, tr("Frames"), QString::number(info.sequenceCount));
-    addOverviewTreeRow(metadataOverviewTree_, tr("Components"), QString::number(info.componentCount));
-    addOverviewTreeRow(metadataOverviewTree_,
-                       tr("Pixel Type"),
-                       info.pixelDataType.isEmpty() ? tr("Unknown") : info.pixelDataType);
-
-    auto *loopsItem = new QTreeWidgetItem(metadataOverviewTree_);
-    loopsItem->setText(0, tr("Loops"));
-    if (info.loops.isEmpty()) {
-        loopsItem->setText(1, tr("Single frame"));
-    } else {
-        loopsItem->setText(1, QStringLiteral("[%1 item%2]")
-                                  .arg(info.loops.size())
-                                  .arg(info.loops.size() == 1 ? QString() : QStringLiteral("s")));
-        for (const LoopInfo &loop : info.loops) {
-            auto *loopItem = new QTreeWidgetItem(loopsItem);
-            loopItem->setText(0, loop.label);
-            loopItem->setText(1, QStringLiteral("%1, %2 steps").arg(loop.type, QString::number(loop.size)));
-        }
-    }
-
-    metadataOverviewTree_->collapseAll();
-    metadataOverviewTree_->expandToDepth(0);
 }
 
 MainWindow::ExportMode MainWindow::promptForExportMode(ExportScope scope) const
@@ -2092,28 +1887,6 @@ QString MainWindow::buildDefaultFrameSavePath(ExportScope scope, const QString &
     return QDir(directory).filePath(nameParts.join(QStringLiteral("_")) + extension);
 }
 
-void MainWindow::rebuildMetadataTabs()
-{
-    if (!metadataTabs_) {
-        return;
-    }
-
-    while (metadataTabs_->count() > 0) {
-        QWidget *page = metadataTabs_->widget(0);
-        metadataTabs_->removeTab(0);
-        delete page;
-    }
-    metadataSectionWidgets_.clear();
-
-    const DocumentInfo &info = controller_.documentInfo();
-    metadataSectionWidgets_.reserve(info.metadataSections.size());
-    for (const MetadataSection &section : info.metadataSections) {
-        metadataSectionWidgets_.push_back(addMetadataTab(section.title));
-    }
-
-    frameMetadataWidgets_ = addMetadataTab(tr("Frame Metadata"));
-}
-
 QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExportSettings &settings) const
 {
     QString directory;
@@ -2189,23 +1962,6 @@ bool MainWindow::hasUsableZStack() const
     return controller_.hasDocument() && VolumeUtils::findZLoopIndex(controller_.documentInfo()) >= 0;
 }
 
-QString MainWindow::volumeFixedCoordinateSummary() const
-{
-    const DocumentInfo &info = controller_.documentInfo();
-    const FrameCoordinateState &coordinates = controller_.coordinateState();
-    QStringList parts;
-    for (int index = 0; index < info.loops.size() && index < coordinates.values.size(); ++index) {
-        if (index == documentZLoopIndex_) {
-            continue;
-        }
-
-        parts << QStringLiteral("%1=%2").arg(info.loops.at(index).label).arg(coordinates.values.at(index));
-    }
-
-    return parts.isEmpty() ? tr("3D view uses the full z-stack for the current file.")
-                           : tr("Fixed coordinates: %1").arg(parts.join(QStringLiteral(", ")));
-}
-
 bool MainWindow::volumeMatchesCurrentFixedCoordinates() const
 {
     if (!cachedVolume_.isValid()) {
@@ -2257,21 +2013,38 @@ void MainWindow::syncVolumeViewportChannelSettings()
     volumeViewport_->setChannelSettings(controller_.channelSettings());
 }
 
+void MainWindow::setLiveAutoForAllChannels(bool enabled)
+{
+    controller_.setLiveAutoEnabled(enabled);
+
+    if (enabled) {
+        autoContrastAllForActiveView();
+    }
+}
+
 void MainWindow::applyVolumeViewMode(bool volumeViewActive)
 {
-    if (!controller_.hasDocument() || !hasUsableZStack()) {
+    if (!controller_.hasDocument()) {
+        return;
+    }
+
+    if (volumeViewActive && !hasUsableZStack()) {
         return;
     }
 
     viewerStack_->setCurrentIndex(volumeViewActive ? 1 : 0);
     channelControlsWidget_->setLiveAutoInteractive(!volumeViewActive);
+    channelControlsWidget_->setAutoContrastTuningEnabled(!volumeViewActive);
     applyZLoopNavigatorLock();
 
     if (volumeViewActive) {
         if (volumeMatchesCurrentFixedCoordinates() && cachedVolume_.isValid()) {
-            volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
-            volumeStatusLabel_->setText(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()));
-            volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
+            if (volumeViewportHasVolume_) {
+                volumeViewport_->setChannelSettings(controller_.channelSettings());
+            } else {
+                volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
+                volumeViewportHasVolume_ = true;
+            }
             volumeFitButton_->setEnabled(true);
             volumeResetButton_->setEnabled(true);
             if (!volumeViewport_->lastError().isEmpty()) {
@@ -2280,6 +2053,9 @@ void MainWindow::applyVolumeViewMode(bool volumeViewActive)
         } else {
             startVolumeLoad();
         }
+    } else {
+        volumeFitButton_->setEnabled(false);
+        volumeResetButton_->setEnabled(false);
     }
 }
 
@@ -2298,10 +2074,9 @@ void MainWindow::startVolumeLoad()
     ++volumeLoadGeneration_;
     const int generation = volumeLoadGeneration_;
 
-    volumeStatusLabel_->setText(tr("Loading 3D volume…"));
-    volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
     volumeFitButton_->setEnabled(false);
     volumeResetButton_->setEnabled(false);
+    statusBar()->showMessage(tr("Loading 3D volume…"));
 
     const QString path = controller_.currentPath();
     const DocumentInfo info = controller_.documentInfo();
@@ -2325,22 +2100,26 @@ void MainWindow::handleVolumeLoadFinished()
     if (!isVolumeViewActive()) {
         if (result.success && result.volume.isValid()) {
             cachedVolume_ = result.volume;
+            volumeViewportHasVolume_ = false;
         }
         return;
     }
 
     if (!result.success || !result.volume.isValid()) {
         qWarning("3D volume load failed: %s", qPrintable(result.error));
+        if (timePlaybackActive_) {
+            stopTimePlayback();
+        }
         QMessageBox::warning(this,
                              tr("3D View"),
                              result.error.isEmpty() ? tr("The 3D volume could not be prepared.") : result.error);
-        QSignalBlocker b1(volumeViewCheck_);
-        volumeViewCheck_->setChecked(false);
         viewerStack_->setCurrentIndex(0);
         channelControlsWidget_->setLiveAutoInteractive(true);
+        channelControlsWidget_->setAutoContrastTuningEnabled(true);
         applyZLoopNavigatorLock();
         cachedVolume_ = {};
-        volumeStatusLabel_->setText(tr("Open 3D view to load the z-stack."));
+        volumeViewportHasVolume_ = false;
+        updateViewModeButtons();
         return;
     }
 
@@ -2350,16 +2129,19 @@ void MainWindow::handleVolumeLoadFinished()
             ? movieExportFrozenChannelSettings_
             : controller_.channelSettings();
     volumeViewport_->setVolume(cachedVolume_, channelSettings);
+    volumeViewportHasVolume_ = true;
     if (movieExportInProgress_ && movieExportVolumeView_) {
         volumeViewport_->setCameraState(movieExportFrozenCameraState_);
     } else if (pendingVolumeCameraState_.valid) {
         volumeViewport_->setCameraState(pendingVolumeCameraState_);
     }
     pendingVolumeCameraState_ = {};
-    volumeStatusLabel_->setText(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()));
-    volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
     volumeFitButton_->setEnabled(true);
     volumeResetButton_->setEnabled(true);
+    statusBar()->showMessage(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()), 3000);
+    if (timePlaybackActive_ && timePlaybackAwaitingFrame_) {
+        completeTimePlaybackStep();
+    }
 
     if (movieExportInProgress_ && movieExportVolumeView_ && movieExportAwaitingFrame_) {
         if (movieExportNextFrameIndex_ < movieExportTimeValues_.size()) {
@@ -2391,7 +2173,6 @@ void MainWindow::handleVolumeLoadFinished()
     }
 
     if (!volumeViewport_->lastError().isEmpty()) {
-        volumeStatusLabel_->setText(tr("3D renderer error: %1").arg(volumeViewport_->lastError()));
         QMessageBox::warning(this, tr("3D View"), volumeViewport_->lastError());
     }
 }
@@ -2416,8 +2197,7 @@ void MainWindow::autoContrastChannelForActiveView(int channelIndex)
         }
 
         ChannelRenderSettings channelSettings = settings.at(channelIndex);
-        const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
-        if (!FrameRenderer::applyAutoContrastToChannel(analysis, channelSettings)) {
+        if (!FrameRenderer::applyAutoContrastToChannelFromZSlices(cachedVolume_, channelIndex, channelSettings)) {
             return;
         }
 
@@ -2436,8 +2216,8 @@ void MainWindow::autoContrastAllForActiveView()
         bool anyChanged = false;
         for (int channelIndex = 0; channelIndex < settings.size(); ++channelIndex) {
             ChannelRenderSettings channelSettings = settings.at(channelIndex);
-            const ChannelAutoContrastAnalysis analysis = FrameRenderer::analyzeChannel(cachedVolume_, channelIndex);
-            const bool channelChanged = FrameRenderer::applyAutoContrastToChannel(analysis, channelSettings);
+            const bool channelChanged = FrameRenderer::applyAutoContrastToChannelFromZSlices(cachedVolume_, channelIndex,
+                                                                                             channelSettings);
 
             if (channelChanged) {
                 controller_.setChannelSettings(channelIndex, channelSettings);
@@ -2498,22 +2278,18 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
 
     if (movieExportVolumeView_) {
         movieExportFrozenChannelSettings_ = movieExportSettings_.channelSettings;
-        for (ChannelRenderSettings &channelSettings : movieExportFrozenChannelSettings_) {
-            channelSettings.autoContrast = false;
-        }
+        movieExportSettings_.liveAutoEnabled = false;
         movieExportSettings_.channelSettings = movieExportFrozenChannelSettings_;
         movieExportFrozenCameraState_ = volumeViewport_->cameraState();
         movieExportOriginalCameraState_ = movieExportFrozenCameraState_;
         movieExportOriginalVolume_ = cachedVolume_;
-        movieExportOriginalVolumeStatusText_ = volumeStatusLabel_ ? volumeStatusLabel_->text() : QString();
-        movieExportOriginalVolumeCoordsText_ = volumeCoordsLabel_ ? volumeCoordsLabel_->text() : QString();
     } else {
         movieExportOriginalChannelSettings_ = controller_.channelSettings();
+        movieExportOriginalLiveAutoEnabled_ = controller_.liveAutoEnabled();
         movieExportFrozenChannelSettings_ = movieExportOriginalChannelSettings_;
-        for (ChannelRenderSettings &channelSettings : movieExportFrozenChannelSettings_) {
-            channelSettings.autoContrast = false;
-        }
+        movieExportSettings_.liveAutoEnabled = false;
         movieExportSettings_.channelSettings = movieExportFrozenChannelSettings_;
+        controller_.setLiveAutoEnabled(false);
         controller_.setChannelSettings(movieExportFrozenChannelSettings_);
     }
 
@@ -2553,6 +2329,7 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
                 }
 
                 volumeViewport_->setVolume(initialVolume.volume, movieExportFrozenChannelSettings_);
+                volumeViewportHasVolume_ = true;
                 volumeViewport_->setCameraState(movieExportFrozenCameraState_);
                 if (!volumeViewport_->lastError().isEmpty()) {
                     QMessageBox::warning(this, tr("Movie Export Failed"), volumeViewport_->lastError());
@@ -2982,29 +2759,26 @@ void MainWindow::cleanupMovieExportPlayback()
 void MainWindow::restoreVolumeViewportAfterMovieExport()
 {
     if (!movieExportVolumeView_ || !volumeViewport_) {
+        controller_.setLiveAutoEnabled(movieExportOriginalLiveAutoEnabled_);
         if (!movieExportOriginalChannelSettings_.isEmpty()) {
             controller_.setChannelSettings(movieExportOriginalChannelSettings_);
         }
         movieExportVolumeView_ = false;
         movieExportFrozenChannelSettings_.clear();
         movieExportOriginalChannelSettings_.clear();
+        movieExportOriginalLiveAutoEnabled_ = false;
         movieExportFrozenCameraState_ = {};
         movieExportOriginalVolume_ = {};
         movieExportOriginalCameraState_ = {};
-        movieExportOriginalVolumeStatusText_.clear();
-        movieExportOriginalVolumeCoordsText_.clear();
         return;
     }
 
     if (movieExportOriginalVolume_.isValid()) {
         volumeViewport_->setVolume(movieExportOriginalVolume_, controller_.channelSettings());
+        volumeViewportHasVolume_ = true;
         volumeViewport_->setCameraState(movieExportOriginalCameraState_);
-    }
-    if (volumeStatusLabel_) {
-        volumeStatusLabel_->setText(movieExportOriginalVolumeStatusText_);
-    }
-    if (volumeCoordsLabel_) {
-        volumeCoordsLabel_->setText(movieExportOriginalVolumeCoordsText_);
+    } else {
+        volumeViewportHasVolume_ = false;
     }
     if (volumeFitButton_) {
         volumeFitButton_->setEnabled(movieExportOriginalVolume_.isValid());
@@ -3016,11 +2790,10 @@ void MainWindow::restoreVolumeViewportAfterMovieExport()
     movieExportVolumeView_ = false;
     movieExportFrozenChannelSettings_.clear();
     movieExportOriginalChannelSettings_.clear();
+    movieExportOriginalLiveAutoEnabled_ = false;
     movieExportFrozenCameraState_ = {};
     movieExportOriginalVolume_ = {};
     movieExportOriginalCameraState_ = {};
-    movieExportOriginalVolumeStatusText_.clear();
-    movieExportOriginalVolumeCoordsText_.clear();
 }
 
 void MainWindow::setMovieExportUiState(bool active)
@@ -3041,15 +2814,16 @@ void MainWindow::setMovieExportUiState(bool active)
     if (reloadAction_) {
         reloadAction_->setEnabled(!active);
     }
+    if (fileInfoAction_) {
+        fileInfoAction_->setEnabled(!active);
+    }
     if (quitAction_) {
         quitAction_->setEnabled(!active);
     }
     if (timePlaybackButton_) {
         timePlaybackButton_->setEnabled(!active);
     }
-    if (volumeViewCheck_) {
-        volumeViewCheck_->setEnabled(!active && hasUsableZStack());
-    }
+    updateViewModeButtons();
 }
 
 QImage MainWindow::captureCurrentVolumeImage() const

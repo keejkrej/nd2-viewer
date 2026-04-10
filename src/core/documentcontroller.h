@@ -25,6 +25,7 @@ public:
     [[nodiscard]] const DocumentInfo &documentInfo() const;
     [[nodiscard]] const FrameCoordinateState &coordinateState() const;
     [[nodiscard]] const QVector<ChannelRenderSettings> &channelSettings() const;
+    [[nodiscard]] bool liveAutoEnabled() const;
     [[nodiscard]] const RenderedFrame &renderedFrame() const;
     [[nodiscard]] const RawFrame &currentRawFrame() const;
     [[nodiscard]] const MetadataSection &currentFrameMetadataSection() const;
@@ -34,6 +35,7 @@ public slots:
     void setCoordinateValue(int loopIndex, int value);
     void setChannelSettings(int channelIndex, const ChannelRenderSettings &settings);
     void setChannelSettings(const QVector<ChannelRenderSettings> &settings);
+    void setLiveAutoEnabled(bool enabled);
     void autoContrastChannel(int channelIndex);
     void autoContrastAllChannels();
     void reloadCurrentFrame();
@@ -82,6 +84,8 @@ private:
     int queuedSequenceIndex_ = -1;
     int requestCounter_ = 0;
     int channelSettingsRevision_ = 0;
+    bool liveAutoEnabled_ = false;
+    bool pendingInitialAutoContrast_ = false;
     bool busy_ = false;
     QFutureWatcher<FrameLoadResult> frameWatcher_;
 };

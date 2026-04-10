@@ -61,16 +61,19 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     mainLayout->setSpacing(6);
 
     auto *headerLayout = new QHBoxLayout();
+    headerLayout->setContentsMargins(0, 0, 0, 0);
     headerLayout->setSpacing(8);
     enabledCheck_ = new QCheckBox(this);
     enabledCheck_->setChecked(true);
+    enabledCheck_->setMinimumHeight(28);
     colorSwatchButton_ = new QPushButton(this);
     colorSwatchButton_->setFixedSize(18, 18);
     colorSwatchButton_->setFlat(true);
     colorSwatchButton_->setToolTip(tr("Choose channel color"));
     nameLabel_ = new QLabel(tr("Channel"), this);
+    nameLabel_->setMinimumHeight(28);
+    nameLabel_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     nameLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    autoCheck_ = new QCheckBox(tr("Live auto"), this);
     tuneButton_ = new QPushButton(this);
     tuneButton_->setIcon(settingsIcon(this));
     tuneButton_->setToolTip(tr("Tune live auto percentiles"));
@@ -78,15 +81,11 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
     tuneButton_->setFixedSize(28, 28);
     tuneButton_->setIconSize(QSize(16, 16));
     tuneButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    autoButton_ = new QPushButton(tr("Auto now"), this);
-    autoButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
-    headerLayout->addWidget(enabledCheck_);
-    headerLayout->addWidget(colorSwatchButton_);
-    headerLayout->addWidget(nameLabel_);
-    headerLayout->addWidget(autoCheck_);
-    headerLayout->addWidget(tuneButton_);
-    headerLayout->addWidget(autoButton_);
+    headerLayout->addWidget(enabledCheck_, 0, Qt::AlignVCenter);
+    headerLayout->addWidget(colorSwatchButton_, 0, Qt::AlignVCenter);
+    headerLayout->addWidget(nameLabel_, 1, Qt::AlignVCenter);
+    headerLayout->addWidget(tuneButton_, 0, Qt::AlignVCenter);
 
     auto *rangeLayout = new QHBoxLayout();
     rangeLayout->setSpacing(6);
@@ -115,33 +114,17 @@ ChannelRowWidget::ChannelRowWidget(QWidget *parent)
         }
     });
 
-    connect(autoCheck_, &QCheckBox::toggled, this, [this](bool checked) {
-        if (updating_) {
-            return;
-        }
-
-        emitEditedSettings();
-        if (checked) {
-            emit autoContrastRequested();
-        }
-    });
-
     const auto onSpinBoxChanged = [this]() {
         if (updating_) {
             return;
         }
 
-        if (autoCheck_->isChecked()) {
-            autoCheck_->setChecked(false);
-            return;
-        }
         emitEditedSettings();
     };
 
     connect(lowSpinBox_, &QDoubleSpinBox::valueChanged, this, [onSpinBoxChanged](double) { onSpinBoxChanged(); });
     connect(highSpinBox_, &QDoubleSpinBox::valueChanged, this, [onSpinBoxChanged](double) { onSpinBoxChanged(); });
 
-    connect(autoButton_, &QPushButton::clicked, this, [this]() { emit autoContrastRequested(); });
     connect(tuneButton_, &QPushButton::clicked, this, [this]() { emit autoContrastTuningRequested(); });
     connect(colorSwatchButton_, &QPushButton::clicked, this, [this]() {
         const QColor selected = QColorDialog::getColor(settings_.color, this, tr("Choose Channel Color"));
@@ -163,7 +146,6 @@ void ChannelRowWidget::setChannel(const ChannelInfo &channel, const ChannelRende
     settings_ = settings;
 
     enabledCheck_->setChecked(settings.enabled);
-    autoCheck_->setChecked(settings.autoContrast);
     nameLabel_->setText(channel.name.isEmpty() ? tr("Channel %1").arg(channel.index + 1) : channel.name);
     updateSwatch(settings.color);
     lowSpinBox_->setValue(settings.low);
@@ -174,21 +156,18 @@ void ChannelRowWidget::setChannel(const ChannelInfo &channel, const ChannelRende
 
 void ChannelRowWidget::setAutoContrastControlsVisible(bool visible)
 {
-    autoCheck_->setVisible(visible);
     tuneButton_->setVisible(visible);
-    autoButton_->setVisible(visible);
 }
 
-void ChannelRowWidget::setLiveAutoInteractive(bool interactive)
+void ChannelRowWidget::setAutoContrastTuningEnabled(bool enabled)
 {
-    autoCheck_->setEnabled(interactive);
+    tuneButton_->setEnabled(enabled);
 }
 
 ChannelRenderSettings ChannelRowWidget::currentSettings() const
 {
     ChannelRenderSettings settings = settings_;
     settings.enabled = enabledCheck_->isChecked();
-    settings.autoContrast = autoCheck_->isChecked();
     settings.low = lowSpinBox_->value();
     settings.high = std::max(highSpinBox_->value(), settings.low + 1.0e-9);
     settings.color = settings_.color;
@@ -212,18 +191,29 @@ ChannelControlsWidget::ChannelControlsWidget(QWidget *parent)
     mainLayout->setContentsMargins(8, 8, 8, 8);
     mainLayout->setSpacing(8);
 
-    autoAllButton_ = new QPushButton(tr("Auto Contrast All"), this);
-    emptyStateLabel_ = new QLabel(tr("Open a file to inspect channels."), this);
+    auto *controlsRow = new QWidget(this);
+    auto *controlsLayout = new QHBoxLayout(controlsRow);
+    controlsLayout->setContentsMargins(0, 0, 0, 0);
+    controlsLayout->setSpacing(8);
+
+    autoAllButton_ = new QPushButton(tr("Auto Contrast"), this);
+    liveAutoCheck_ = new QCheckBox(tr("Live Auto"), this);
+    controlsLayout->addWidget(autoAllButton_);
+    controlsLayout->addWidget(liveAutoCheck_);
+    controlsLayout->addStretch(1);
+
+    emptyStateLabel_ = new QLabel(QString(), this);
     emptyStateLabel_->setWordWrap(true);
     rowsLayout_ = new QVBoxLayout();
     rowsLayout_->setSpacing(8);
     rowsLayout_->addWidget(emptyStateLabel_);
     rowsLayout_->addStretch(1);
 
-    mainLayout->addWidget(autoAllButton_);
+    mainLayout->addWidget(controlsRow);
     mainLayout->addLayout(rowsLayout_, 1);
 
     connect(autoAllButton_, &QPushButton::clicked, this, &ChannelControlsWidget::autoContrastAllRequested);
+    connect(liveAutoCheck_, &QCheckBox::toggled, this, &ChannelControlsWidget::liveAutoChanged);
 }
 
 void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, const QVector<ChannelRenderSettings> &settings)
@@ -232,10 +222,18 @@ void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, co
     channels_ = channels;
 
     if (channels.isEmpty() || settings.isEmpty()) {
+        autoAllButton_->hide();
+        liveAutoCheck_->hide();
         emptyStateLabel_->show();
         return;
     }
 
+    autoAllButton_->setVisible(autoContrastControlsVisible_);
+    {
+        const QSignalBlocker blocker(liveAutoCheck_);
+        liveAutoCheck_->setChecked(liveAutoEnabled_);
+    }
+    liveAutoCheck_->setVisible(autoContrastControlsVisible_);
     emptyStateLabel_->hide();
     for (int index = 0; index < settings.size(); ++index) {
         auto *row = new ChannelRowWidget(this);
@@ -243,14 +241,12 @@ void ChannelControlsWidget::setChannels(const QVector<ChannelInfo> &channels, co
                                                             : fallbackChannelInfo(index, tr("Channel %1").arg(index + 1));
         row->setChannel(channel, settings.at(index));
         row->setAutoContrastControlsVisible(autoContrastControlsVisible_);
+        row->setAutoContrastTuningEnabled(autoContrastTuningEnabled_);
         rowsLayout_->insertWidget(rowsLayout_->count() - 1, row);
         rows_.push_back(row);
 
         connect(row, &ChannelRowWidget::settingsEdited, this, [this, index](const ChannelRenderSettings &rowSettings) {
             emit channelSettingsChanged(index, rowSettings);
-        });
-        connect(row, &ChannelRowWidget::autoContrastRequested, this, [this, index]() {
-            emit autoContrastRequested(index);
         });
         connect(row, &ChannelRowWidget::autoContrastTuningRequested, this, [this, index]() {
             emit autoContrastTuningRequested(index);
@@ -262,15 +258,29 @@ void ChannelControlsWidget::setAutoContrastControlsVisible(bool visible)
 {
     autoContrastControlsVisible_ = visible;
     autoAllButton_->setVisible(visible);
+    liveAutoCheck_->setVisible(visible);
     for (ChannelRowWidget *row : std::as_const(rows_)) {
         row->setAutoContrastControlsVisible(visible);
     }
 }
 
+void ChannelControlsWidget::setLiveAutoEnabled(bool enabled)
+{
+    liveAutoEnabled_ = enabled;
+    const QSignalBlocker blocker(liveAutoCheck_);
+    liveAutoCheck_->setChecked(enabled);
+}
+
 void ChannelControlsWidget::setLiveAutoInteractive(bool interactive)
 {
+    liveAutoCheck_->setEnabled(interactive);
+}
+
+void ChannelControlsWidget::setAutoContrastTuningEnabled(bool enabled)
+{
+    autoContrastTuningEnabled_ = enabled;
     for (ChannelRowWidget *row : std::as_const(rows_)) {
-        row->setLiveAutoInteractive(interactive);
+        row->setAutoContrastTuningEnabled(enabled);
     }
 }
 

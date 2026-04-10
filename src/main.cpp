@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QIcon>
+#include <QLibraryInfo>
 #include <QMessageLogContext>
 #include <QMutex>
 #include <QMutexLocker>
@@ -25,6 +26,43 @@ namespace
 {
 QFile *gLogFile = nullptr;
 QMutex gLogMutex;
+
+bool hasQtFfmpegMediaPlugin(const QStringList &libraryPaths)
+{
+    for (const QString &basePath : libraryPaths) {
+        const QDir multimediaDir(basePath + QStringLiteral("/multimedia"));
+        const QStringList entries = multimediaDir.entryList(QDir::Files);
+        for (const QString &entry : entries) {
+            if (entry.contains(QStringLiteral("ffmpeg"), Qt::CaseInsensitive)
+                && entry.contains(QStringLiteral("mediaplugin"), Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void preferQtFfmpegMediaBackendIfAvailable()
+{
+    if (qEnvironmentVariableIsSet("QT_MEDIA_BACKEND")) {
+        qInfo("QT_MEDIA_BACKEND already set to %s", qPrintable(qEnvironmentVariable("QT_MEDIA_BACKEND")));
+        return;
+    }
+
+    QStringList libraryPaths = QCoreApplication::libraryPaths();
+    const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
+    if (!qtPluginPath.isEmpty() && !libraryPaths.contains(qtPluginPath)) {
+        libraryPaths.push_back(qtPluginPath);
+    }
+
+    if (hasQtFfmpegMediaPlugin(libraryPaths)) {
+        qputenv("QT_MEDIA_BACKEND", QByteArrayLiteral("ffmpeg"));
+        qInfo("QT_MEDIA_BACKEND set to ffmpeg");
+    } else {
+        qInfo("Qt FFmpeg multimedia plugin not found; leaving QT_MEDIA_BACKEND unset");
+    }
+}
 
 void appMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
@@ -102,6 +140,7 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(QStringLiteral("nd2-viewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));
     setupLogging();
+    preferQtFfmpegMediaBackendIfAvailable();
 
     qRegisterMetaType<ChannelRenderSettings>();
     qRegisterMetaType<FrameCoordinateState>();

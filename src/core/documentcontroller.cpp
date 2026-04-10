@@ -148,6 +148,18 @@ void DocumentController::setChannelSettings(int channelIndex, const ChannelRende
     rerenderCurrentFrame(false);
 }
 
+void DocumentController::setChannelSettings(const QVector<ChannelRenderSettings> &settings)
+{
+    if (settings.size() != channelSettings_.size()) {
+        return;
+    }
+
+    channelSettings_ = settings;
+    ++channelSettingsRevision_;
+    emit channelSettingsChanged();
+    rerenderCurrentFrame(false);
+}
+
 void DocumentController::autoContrastChannel(int channelIndex)
 {
     if (channelIndex < 0 || channelIndex >= channelSettings_.size()) {

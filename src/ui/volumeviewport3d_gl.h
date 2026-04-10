@@ -27,6 +27,8 @@ public:
     void setChannelSettings(const QVector<ChannelRenderSettings> &channelSettings) override;
     void resetView() override;
     void fitToVolume() override;
+    [[nodiscard]] VolumeViewport3DCameraState cameraState() const override;
+    void setCameraState(const VolumeViewport3DCameraState &state) override;
     [[nodiscard]] QString lastError() const override;
     [[nodiscard]] QString renderSummary() const override;
 

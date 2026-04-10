@@ -182,6 +182,47 @@ void VolumeViewport3DBackendVtk::fitToVolume()
     renderNow();
 }
 
+VolumeViewport3DCameraState VolumeViewport3DBackendVtk::cameraState() const
+{
+    VolumeViewport3DCameraState state;
+    if (!renderer_ || !renderer_->GetActiveCamera()) {
+        return state;
+    }
+
+    vtkCamera *camera = renderer_->GetActiveCamera();
+    double position[3];
+    double focalPoint[3];
+    double viewUp[3];
+    camera->GetPosition(position);
+    camera->GetFocalPoint(focalPoint);
+    camera->GetViewUp(viewUp);
+
+    state.valid = true;
+    state.position = QVector3D(position[0], position[1], position[2]);
+    state.focalPoint = QVector3D(focalPoint[0], focalPoint[1], focalPoint[2]);
+    state.viewUp = QVector3D(viewUp[0], viewUp[1], viewUp[2]);
+    return state;
+}
+
+void VolumeViewport3DBackendVtk::setCameraState(const VolumeViewport3DCameraState &state)
+{
+    if (!state.valid || !renderer_ || !renderer_->GetActiveCamera()) {
+        return;
+    }
+
+    vtkCamera *camera = renderer_->GetActiveCamera();
+    camera->SetPosition(state.position.x(), state.position.y(), state.position.z());
+    camera->SetFocalPoint(state.focalPoint.x(), state.focalPoint.y(), state.focalPoint.z());
+    camera->SetViewUp(state.viewUp.x(), state.viewUp.y(), state.viewUp.z());
+    camera->OrthogonalizeViewUp();
+
+    double bounds[6];
+    if (computeVisibleBounds(bounds)) {
+        renderer_->ResetCameraClippingRange(bounds);
+    }
+    renderNow();
+}
+
 QString VolumeViewport3DBackendVtk::lastError() const
 {
     return lastError_;

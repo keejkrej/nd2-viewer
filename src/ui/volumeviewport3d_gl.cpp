@@ -243,6 +243,35 @@ void VolumeViewport3DBackendGl::fitToVolume()
     update();
 }
 
+VolumeViewport3DCameraState VolumeViewport3DBackendGl::cameraState() const
+{
+    VolumeViewport3DCameraState state;
+    state.valid = true;
+    state.position = cameraPositionObject();
+    state.focalPoint = QVector3D(0.0f, 0.0f, 0.0f);
+    state.viewUp = QVector3D(0.0f, 1.0f, 0.0f);
+    return state;
+}
+
+void VolumeViewport3DBackendGl::setCameraState(const VolumeViewport3DCameraState &state)
+{
+    if (!state.valid) {
+        return;
+    }
+
+    const QVector3D viewVector = state.position - state.focalPoint;
+    const float distance = viewVector.length();
+    if (!(distance > 0.0f)) {
+        return;
+    }
+
+    distance_ = std::clamp(distance, 1.1f, 8.0f);
+    yawDegrees_ = qRadiansToDegrees(std::atan2(viewVector.x(), viewVector.z()));
+    const float normalizedY = std::clamp(viewVector.y() / distance, -1.0f, 1.0f);
+    pitchDegrees_ = std::clamp(qRadiansToDegrees(std::asin(normalizedY)), -85.0f, 85.0f);
+    update();
+}
+
 QString VolumeViewport3DBackendGl::lastError() const
 {
     return lastError_;

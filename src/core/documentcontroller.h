@@ -33,6 +33,7 @@ public:
 public slots:
     void setCoordinateValue(int loopIndex, int value);
     void setChannelSettings(int channelIndex, const ChannelRenderSettings &settings);
+    void setChannelSettings(const QVector<ChannelRenderSettings> &settings);
     void autoContrastChannel(int channelIndex);
     void autoContrastAllChannels();
     void reloadCurrentFrame();

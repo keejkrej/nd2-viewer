@@ -3,6 +3,7 @@
 #include "core/movieexporter.h"
 #include "core/documentcontroller.h"
 #include "core/volumeloader.h"
+#include "ui/volumeviewport3d.h"
 
 #include <QFutureWatcher>
 #include <QMainWindow>
@@ -28,8 +29,6 @@ class QTreeWidget;
 class QVideoFrameInput;
 class QVBoxLayout;
 class QCloseEvent;
-class VolumeViewport3D;
-
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -104,6 +103,8 @@ private:
     void buildCentralUi();
     void exportCurrentSelection(ExportScope scope);
     void exportMovieSelection(ExportScope scope);
+    void exportCurrentVolumeFrame();
+    void exportVolumeMovie();
     void rebuildNavigatorControls();
     void commitLoopSliderValue(int loopIndex);
     void handleTimePlaybackButton();
@@ -137,9 +138,13 @@ private:
     void startMovieExportPlayback(const MovieExportSettings &settings);
     void requestNextMovieExportFrame();
     void prepareCurrentMovieExportFrame();
+    void consumePreparedMovieExportImage(const QImage &image);
     void trySendMovieExportFrame();
     void finishMovieExportPlayback(const QString &errorMessage = QString());
     void cleanupMovieExportPlayback();
+    void restoreVolumeViewportAfterMovieExport();
+    [[nodiscard]] QImage renderMovieExportFrameImage(int timeValue, QString *errorMessage) const;
+    [[nodiscard]] QString movieExportBackendUnsupportedReason() const;
     void openAutoContrastTuningDialog(int channelIndex);
     void applyVolumeViewMode(bool volumeViewActive);
     void applyZLoopNavigatorLock();
@@ -147,6 +152,7 @@ private:
     void syncVolumeViewportChannelSettings();
     void autoContrastChannelForActiveView(int channelIndex);
     void autoContrastAllForActiveView();
+    [[nodiscard]] QImage captureCurrentVolumeImage() const;
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     void updateWindowTitle();
     void updateInfoLabel();
@@ -165,6 +171,7 @@ private:
     int volumeLoadGeneration_ = 0;
     RawVolume cachedVolume_;
     int documentZLoopIndex_ = -1;
+    VolumeViewport3DCameraState pendingVolumeCameraState_;
 
     QWidget *navigatorContainer_ = nullptr;
     QVBoxLayout *navigatorRowsLayout_ = nullptr;
@@ -191,6 +198,7 @@ private:
     QTimer *timePlaybackTimer_ = nullptr;
     QToolButton *timePlaybackButton_ = nullptr;
     MovieExportSettings movieExportSettings_;
+    DocumentInfo movieExportDocumentInfo_;
     QVector<int> movieExportTimeValues_;
     int movieExportNextFrameIndex_ = 0;
     int movieExportEncodedFrameCount_ = 0;
@@ -198,6 +206,14 @@ private:
     bool movieExportPendingEndOfStream_ = false;
     bool movieExportEndOfStreamSent_ = false;
     bool movieVideoFrameInputReady_ = false;
+    bool movieExportVolumeView_ = false;
+    QVector<ChannelRenderSettings> movieExportFrozenChannelSettings_;
+    QVector<ChannelRenderSettings> movieExportOriginalChannelSettings_;
+    VolumeViewport3DCameraState movieExportFrozenCameraState_;
+    RawVolume movieExportOriginalVolume_;
+    VolumeViewport3DCameraState movieExportOriginalCameraState_;
+    QString movieExportOriginalVolumeStatusText_;
+    QString movieExportOriginalVolumeCoordsText_;
     QMediaCaptureSession *movieCaptureSession_ = nullptr;
     QMediaRecorder *movieRecorder_ = nullptr;
     QVideoFrameInput *movieVideoFrameInput_ = nullptr;

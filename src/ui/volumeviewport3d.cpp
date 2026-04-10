@@ -1,6 +1,5 @@
 #include "ui/volumeviewport3d.h"
 
-#include "ui/volumeviewport3d_backend.h"
 #include "ui/volumeviewport3d_gl.h"
 
 #if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
@@ -44,6 +43,21 @@ void VolumeViewport3D::resetView()
 void VolumeViewport3D::fitToVolume()
 {
     backend_->fitToVolume();
+}
+
+VolumeViewport3DCameraState VolumeViewport3D::cameraState() const
+{
+    return backend_->cameraState();
+}
+
+void VolumeViewport3D::setCameraState(const VolumeViewport3DCameraState &state)
+{
+    backend_->setCameraState(state);
+}
+
+QImage VolumeViewport3D::captureImage() const
+{
+    return backend_->widget()->grab().toImage().convertToFormat(QImage::Format_ARGB32);
 }
 
 QString VolumeViewport3D::lastError() const

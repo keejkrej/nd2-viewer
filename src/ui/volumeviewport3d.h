@@ -1,12 +1,10 @@
 #pragma once
 
-#include "core/documenttypes.h"
+#include "ui/volumeviewport3d_backend.h"
 
-#include <memory>
-
+#include <QImage>
 #include <QWidget>
-
-class VolumeViewport3DBackend;
+#include <memory>
 
 class VolumeViewport3D : public QWidget
 {
@@ -20,6 +18,9 @@ public:
     void setChannelSettings(const QVector<ChannelRenderSettings> &channelSettings);
     void resetView();
     void fitToVolume();
+    [[nodiscard]] VolumeViewport3DCameraState cameraState() const;
+    void setCameraState(const VolumeViewport3DCameraState &state);
+    [[nodiscard]] QImage captureImage() const;
     [[nodiscard]] QString lastError() const;
     [[nodiscard]] QString renderSummary() const;
 

@@ -3,6 +3,7 @@
 #include "ui/channelcontrolswidget.h"
 #include "ui/imageviewport.h"
 #include "ui/volumeviewport3d.h"
+#include "core/documentreaderfactory.h"
 #include "core/framerenderer.h"
 #include "core/volumeutils.h"
 
@@ -26,6 +27,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLibraryInfo>
 #include <QLocale>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -69,6 +71,22 @@
 
 namespace
 {
+bool hasQtFfmpegMediaPlugin(const QStringList &libraryPaths)
+{
+    for (const QString &basePath : libraryPaths) {
+        const QDir multimediaDir(basePath + QStringLiteral("/multimedia"));
+        const QStringList entries = multimediaDir.entryList(QDir::Files);
+        for (const QString &entry : entries) {
+            if (entry.contains(QStringLiteral("ffmpeg"), Qt::CaseInsensitive)
+                && entry.contains(QStringLiteral("mediaplugin"), Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 QString scalarToDisplayString(const QJsonValue &value)
 {
     if (value.isString()) {
@@ -742,7 +760,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(imageViewport_, &ImageViewport::exportRoiMovieRequested, this, &MainWindow::exportRoiMovieAs);
 
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
-            &controller_, &DocumentController::setChannelSettings);
+            &controller_, qOverload<int, const ChannelRenderSettings &>(&DocumentController::setChannelSettings));
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastRequested,
             this, &MainWindow::autoContrastChannelForActiveView);
     connect(channelControlsWidget_, &ChannelControlsWidget::autoContrastTuningRequested,
@@ -846,6 +864,11 @@ void MainWindow::openFile()
 
 void MainWindow::saveCurrentFrameAs()
 {
+    if (isVolumeViewActive()) {
+        exportCurrentVolumeFrame();
+        return;
+    }
+
     exportCurrentSelection(ExportScope::Frame);
 }
 
@@ -856,6 +879,11 @@ void MainWindow::saveCurrentRoiAs()
 
 void MainWindow::exportMovieAs()
 {
+    if (isVolumeViewActive()) {
+        exportVolumeMovie();
+        return;
+    }
+
     exportMovieSelection(ExportScope::Frame);
 }
 
@@ -1093,6 +1121,121 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     startMovieExportPlayback(settings);
 }
 
+void MainWindow::exportCurrentVolumeFrame()
+{
+    if (movieExportInProgress_ || !isVolumeViewActive() || !cachedVolume_.isValid() || !volumeViewport_) {
+        return;
+    }
+
+    const QImage image = captureCurrentVolumeImage();
+    if (image.isNull()) {
+        QMessageBox::warning(this,
+                             tr("Export Failed"),
+                             tr("The current 3D view could not be captured."));
+        return;
+    }
+
+    QString selectedPath = QFileDialog::getSaveFileName(this,
+                                                        tr("Save 3D Frame"),
+                                                        buildDefaultFrameSavePath(ExportScope::Frame, QStringLiteral(".png")),
+                                                        tr("PNG Image (*.png)"));
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo outputInfo(selectedPath);
+    if (outputInfo.suffix().isEmpty()) {
+        selectedPath += QStringLiteral(".png");
+    } else if (outputInfo.suffix().compare(QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
+        selectedPath = outputInfo.dir().filePath(outputInfo.completeBaseName() + QStringLiteral(".png"));
+    }
+
+    if (!image.save(selectedPath, "PNG")) {
+        QMessageBox::warning(this,
+                             tr("Export Failed"),
+                             tr("The current 3D view could not be written to:\n%1")
+                                 .arg(QDir::toNativeSeparators(selectedPath)));
+        return;
+    }
+
+    statusBar()->showMessage(tr("Exported 3D frame to %1").arg(QDir::toNativeSeparators(selectedPath)), 5000);
+}
+
+void MainWindow::exportVolumeMovie()
+{
+    if (movieExportInProgress_ || !isVolumeViewActive() || !cachedVolume_.isValid() || !volumeViewport_) {
+        return;
+    }
+
+    stopTimePlayback();
+
+    const int timeLoopIndex = findTimeLoopIndex();
+    if (timeLoopIndex < 0) {
+        QMessageBox::information(this,
+                                 tr("Movie Export Unavailable"),
+                                 tr("This file does not expose a time loop, so movie export is unavailable."));
+        return;
+    }
+
+    const QImage sampleImage = captureCurrentVolumeImage();
+    if (sampleImage.isNull()) {
+        QMessageBox::warning(this,
+                             tr("Movie Export Failed"),
+                             tr("The current 3D view could not be captured for export."));
+        return;
+    }
+
+    MovieExportSettings settings;
+    settings.sourcePath = controller_.currentPath();
+    settings.fixedCoordinates = controller_.coordinateState().values;
+    settings.channelSettings = controller_.channelSettings();
+    for (ChannelRenderSettings &channelSettings : settings.channelSettings) {
+        channelSettings.autoContrast = false;
+    }
+    settings.timeLoopIndex = timeLoopIndex;
+    settings.outputSize = sampleImage.size();
+    settings.fps = 10.0;
+
+    const LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
+    MovieExportDialog dialog(settings, sampleImage, timeLoop.size, false, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    settings = dialog.currentSettings();
+    for (ChannelRenderSettings &channelSettings : settings.channelSettings) {
+        channelSettings.autoContrast = false;
+    }
+
+    QString selectedPath = QFileDialog::getSaveFileName(this,
+                                                        tr("Save 3D Movie"),
+                                                        buildDefaultMovieSavePath(ExportScope::Frame, settings),
+                                                        tr("MP4 Video (*.mp4)"));
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo outputInfo(selectedPath);
+    if (outputInfo.suffix().isEmpty()) {
+        selectedPath += QStringLiteral(".mp4");
+    } else if (outputInfo.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
+        selectedPath = outputInfo.dir().filePath(outputInfo.completeBaseName() + QStringLiteral(".mp4"));
+    }
+    settings.outputPath = selectedPath;
+
+    const MovieExportEstimate estimate = dialog.currentEstimate();
+    if (!estimate.valid) {
+        QMessageBox::warning(this,
+                             tr("Movie Export Failed"),
+                             estimate.errorMessage.isEmpty()
+                                 ? tr("The movie export settings are not valid.")
+                                 : estimate.errorMessage);
+        return;
+    }
+
+    startMovieExportPlayback(settings);
+}
+
 void MainWindow::updateDocumentUi()
 {
     cachedVolume_ = {};
@@ -1236,6 +1379,21 @@ void MainWindow::buildMenus()
     reloadAction_ = fileMenu->addAction(tr("&Reload Frame"));
     reloadAction_->setShortcut(tr("F5"));
     connect(reloadAction_, &QAction::triggered, &controller_, &DocumentController::reloadCurrentFrame);
+
+    fileMenu->addSeparator();
+    auto *exportMenu = fileMenu->addMenu(tr("&Export"));
+
+    auto *exportCurrentFrameAction = exportMenu->addAction(tr("Frame..."));
+    connect(exportCurrentFrameAction, &QAction::triggered, this, &MainWindow::saveCurrentFrameAs);
+
+    auto *exportMovieAction = exportMenu->addAction(tr("Movie..."));
+    connect(exportMovieAction, &QAction::triggered, this, &MainWindow::exportMovieAs);
+
+    auto *exportCurrentRoiAction = exportMenu->addAction(tr("ROI Frame..."));
+    connect(exportCurrentRoiAction, &QAction::triggered, this, &MainWindow::saveCurrentRoiAs);
+
+    auto *exportRoiMovieAction = exportMenu->addAction(tr("ROI Movie..."));
+    connect(exportRoiMovieAction, &QAction::triggered, this, &MainWindow::exportRoiMovieAs);
 
     fileMenu->addSeparator();
     quitAction_ = fileMenu->addAction(tr("E&xit"));
@@ -2131,6 +2289,12 @@ void MainWindow::startVolumeLoad()
         return;
     }
 
+    if (volumeViewport_ && cachedVolume_.isValid()) {
+        pendingVolumeCameraState_ = volumeViewport_->cameraState();
+    } else {
+        pendingVolumeCameraState_ = {};
+    }
+
     ++volumeLoadGeneration_;
     const int generation = volumeLoadGeneration_;
 
@@ -2181,11 +2345,51 @@ void MainWindow::handleVolumeLoadFinished()
     }
 
     cachedVolume_ = result.volume;
-    volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
+    const QVector<ChannelRenderSettings> channelSettings =
+        (movieExportInProgress_ && movieExportVolumeView_ && !movieExportFrozenChannelSettings_.isEmpty())
+            ? movieExportFrozenChannelSettings_
+            : controller_.channelSettings();
+    volumeViewport_->setVolume(cachedVolume_, channelSettings);
+    if (movieExportInProgress_ && movieExportVolumeView_) {
+        volumeViewport_->setCameraState(movieExportFrozenCameraState_);
+    } else if (pendingVolumeCameraState_.valid) {
+        volumeViewport_->setCameraState(pendingVolumeCameraState_);
+    }
+    pendingVolumeCameraState_ = {};
     volumeStatusLabel_->setText(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()));
     volumeCoordsLabel_->setText(volumeFixedCoordinateSummary());
     volumeFitButton_->setEnabled(true);
     volumeResetButton_->setEnabled(true);
+
+    if (movieExportInProgress_ && movieExportVolumeView_ && movieExportAwaitingFrame_) {
+        if (movieExportNextFrameIndex_ < movieExportTimeValues_.size()) {
+            const FrameCoordinateState &state = controller_.coordinateState();
+            const int expectedTimeValue = movieExportTimeValues_.at(movieExportNextFrameIndex_);
+            if (movieExportSettings_.timeLoopIndex < state.values.size()
+                && state.values.at(movieExportSettings_.timeLoopIndex) == expectedTimeValue) {
+                volumeViewport_->setCameraState(movieExportFrozenCameraState_);
+
+                QImage image = captureCurrentVolumeImage();
+                if (image.isNull()) {
+                    finishMovieExportPlayback(tr("The current 3D view could not be captured for movie export."));
+                    return;
+                }
+                if (image.size() != movieExportSettings_.outputSize) {
+                    image = image.scaled(movieExportSettings_.outputSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                }
+                image = image.convertToFormat(QImage::Format_ARGB32);
+                if (image.isNull()) {
+                    finishMovieExportPlayback(tr("The current 3D view could not be prepared for movie export."));
+                    return;
+                }
+
+                ++movieExportNextFrameIndex_;
+                consumePreparedMovieExportImage(image);
+                return;
+            }
+        }
+    }
+
     if (!volumeViewport_->lastError().isEmpty()) {
         volumeStatusLabel_->setText(tr("3D renderer error: %1").arg(volumeViewport_->lastError()));
         QMessageBox::warning(this, tr("3D View"), volumeViewport_->lastError());
@@ -2254,6 +2458,12 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
 {
     stopTimePlayback();
 
+    const QString backendUnsupportedReason = movieExportBackendUnsupportedReason();
+    if (!backendUnsupportedReason.isEmpty()) {
+        QMessageBox::warning(this, tr("Movie Export Failed"), backendUnsupportedReason);
+        return;
+    }
+
     QMediaFormat format(QMediaFormat::MPEG4);
     format.setVideoCodec(QMediaFormat::VideoCodec::H264);
     format.setAudioCodec(QMediaFormat::AudioCodec::Unspecified);
@@ -2267,7 +2477,9 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
     cleanupMovieExportPlayback();
 
     movieExportSettings_ = settings;
+    movieExportDocumentInfo_ = controller_.documentInfo();
     movieExportTimeValues_ = buildTimeFrameValues(movieExportSettings_);
+    movieExportVolumeView_ = isVolumeViewActive() && volumeViewport_ && cachedVolume_.isValid();
 
     if (movieExportTimeValues_.isEmpty()) {
         QMessageBox::warning(this,
@@ -2283,6 +2495,139 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
     movieExportEndOfStreamSent_ = false;
     movieVideoFrameInputReady_ = false;
     moviePendingFrame_ = {};
+
+    if (movieExportVolumeView_) {
+        movieExportFrozenChannelSettings_ = movieExportSettings_.channelSettings;
+        for (ChannelRenderSettings &channelSettings : movieExportFrozenChannelSettings_) {
+            channelSettings.autoContrast = false;
+        }
+        movieExportSettings_.channelSettings = movieExportFrozenChannelSettings_;
+        movieExportFrozenCameraState_ = volumeViewport_->cameraState();
+        movieExportOriginalCameraState_ = movieExportFrozenCameraState_;
+        movieExportOriginalVolume_ = cachedVolume_;
+        movieExportOriginalVolumeStatusText_ = volumeStatusLabel_ ? volumeStatusLabel_->text() : QString();
+        movieExportOriginalVolumeCoordsText_ = volumeCoordsLabel_ ? volumeCoordsLabel_->text() : QString();
+    } else {
+        movieExportOriginalChannelSettings_ = controller_.channelSettings();
+        movieExportFrozenChannelSettings_ = movieExportOriginalChannelSettings_;
+        for (ChannelRenderSettings &channelSettings : movieExportFrozenChannelSettings_) {
+            channelSettings.autoContrast = false;
+        }
+        movieExportSettings_.channelSettings = movieExportFrozenChannelSettings_;
+        controller_.setChannelSettings(movieExportFrozenChannelSettings_);
+    }
+
+    if (!movieExportTimeValues_.isEmpty()) {
+        const int firstTimeValue = movieExportTimeValues_.first();
+        const FrameCoordinateState &state = controller_.coordinateState();
+
+        QImage initialImage;
+        if (movieExportVolumeView_) {
+            if (movieExportSettings_.timeLoopIndex >= 0
+                && movieExportSettings_.timeLoopIndex < state.values.size()
+                && state.values.at(movieExportSettings_.timeLoopIndex) == firstTimeValue
+                && cachedVolume_.isValid()) {
+                initialImage = captureCurrentVolumeImage();
+            } else {
+                FrameCoordinateState coordinates;
+                coordinates.values = movieExportSettings_.fixedCoordinates;
+                if (movieExportSettings_.timeLoopIndex >= 0 && movieExportSettings_.timeLoopIndex < coordinates.values.size()) {
+                    coordinates.values[movieExportSettings_.timeLoopIndex] = firstTimeValue;
+                }
+
+                const VolumeLoadResult initialVolume = VolumeLoader::load(movieExportSettings_.sourcePath,
+                                                                          movieExportDocumentInfo_,
+                                                                          coordinates,
+                                                                          movieExportFrozenChannelSettings_);
+                if (!initialVolume.success || !initialVolume.volume.isValid()) {
+                    QMessageBox::warning(this,
+                                         tr("Movie Export Failed"),
+                                         initialVolume.error.isEmpty()
+                                             ? tr("The 3D volume could not be prepared for export.")
+                                             : initialVolume.error);
+                    restoreVolumeViewportAfterMovieExport();
+                    movieExportSettings_ = {};
+                    movieExportDocumentInfo_ = {};
+                    movieExportTimeValues_.clear();
+                    return;
+                }
+
+                volumeViewport_->setVolume(initialVolume.volume, movieExportFrozenChannelSettings_);
+                volumeViewport_->setCameraState(movieExportFrozenCameraState_);
+                if (!volumeViewport_->lastError().isEmpty()) {
+                    QMessageBox::warning(this, tr("Movie Export Failed"), volumeViewport_->lastError());
+                    restoreVolumeViewportAfterMovieExport();
+                    movieExportSettings_ = {};
+                    movieExportDocumentInfo_ = {};
+                    movieExportTimeValues_.clear();
+                    return;
+                }
+                initialImage = captureCurrentVolumeImage();
+            }
+        } else if (movieExportSettings_.timeLoopIndex >= 0
+                   && movieExportSettings_.timeLoopIndex < state.values.size()
+                   && state.values.at(movieExportSettings_.timeLoopIndex) == firstTimeValue
+                   && controller_.renderedFrame().isValid()
+                   && controller_.currentRawFrame().isValid()) {
+            initialImage = controller_.renderedFrame().image;
+            if (movieExportSettings_.roiRect.isValid() && !movieExportSettings_.roiRect.isEmpty()) {
+                initialImage = initialImage.copy(movieExportSettings_.roiRect);
+            }
+        } else {
+            QString initialFrameError;
+            initialImage = renderMovieExportFrameImage(firstTimeValue, &initialFrameError);
+            if (initialImage.isNull()) {
+                QMessageBox::warning(this,
+                                     tr("Movie Export Failed"),
+                                     initialFrameError.isEmpty()
+                                         ? tr("The current rendered frame could not be prepared for movie export.")
+                                         : initialFrameError);
+                restoreVolumeViewportAfterMovieExport();
+                movieExportSettings_ = {};
+                movieExportDocumentInfo_ = {};
+                movieExportTimeValues_.clear();
+                return;
+            }
+        }
+
+        if (initialImage.isNull()) {
+            QMessageBox::warning(this,
+                                 tr("Movie Export Failed"),
+                                 movieExportVolumeView_
+                                     ? tr("The current 3D view could not be prepared for movie export.")
+                                     : tr("The current rendered frame could not be prepared for movie export."));
+            restoreVolumeViewportAfterMovieExport();
+            movieExportSettings_ = {};
+            movieExportDocumentInfo_ = {};
+            movieExportTimeValues_.clear();
+            return;
+        }
+
+        if (initialImage.size() != movieExportSettings_.outputSize) {
+            initialImage = initialImage.scaled(movieExportSettings_.outputSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        initialImage = initialImage.convertToFormat(QImage::Format_ARGB32);
+        if (initialImage.isNull()) {
+            QMessageBox::warning(this,
+                                 tr("Movie Export Failed"),
+                                 movieExportVolumeView_
+                                     ? tr("The current 3D view could not be prepared for movie export.")
+                                     : tr("The current rendered frame could not be prepared for movie export."));
+            restoreVolumeViewportAfterMovieExport();
+            movieExportSettings_ = {};
+            movieExportDocumentInfo_ = {};
+            movieExportTimeValues_.clear();
+            return;
+        }
+
+        moviePendingFrame_ = QVideoFrame(initialImage);
+        moviePendingFrame_.setStreamFrameRate(movieExportSettings_.fps);
+        const qint64 startTimeUs = 0;
+        const qint64 endTimeUs = qRound64(1000000.0 / movieExportSettings_.fps);
+        moviePendingFrame_.setStartTime(startTimeUs);
+        moviePendingFrame_.setEndTime(endTimeUs);
+        movieExportNextFrameIndex_ = 1;
+    }
 
     QVideoFrameFormat videoFrameFormat(movieExportSettings_.outputSize,
                                        QVideoFrameFormat::pixelFormatFromImageFormat(QImage::Format_ARGB32));
@@ -2319,15 +2664,24 @@ void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)
                     return;
                 }
                 if (state == QMediaRecorder::RecordingState) {
-                    statusBar()->showMessage(tr("Exporting movie live through the viewer…"));
-                    requestNextMovieExportFrame();
+                    statusBar()->showMessage(movieExportVolumeView_
+                                                 ? tr("Exporting 3D movie through the viewer…")
+                                                 : tr("Exporting movie live through the viewer…"));
+                    movieVideoFrameInputReady_ = true;
+                    if (moviePendingFrame_.isValid()) {
+                        trySendMovieExportFrame();
+                    } else {
+                        requestNextMovieExportFrame();
+                    }
                 } else if (state == QMediaRecorder::StoppedState && movieExportEndOfStreamSent_) {
                     finishMovieExportPlayback();
                 }
             });
 
     setMovieExportUiState(true);
-    statusBar()->showMessage(tr("Preparing live movie export…"));
+    statusBar()->showMessage(movieExportVolumeView_
+                                 ? tr("Preparing 3D movie export…")
+                                 : tr("Preparing live movie export…"));
     movieRecorder_->record();
 }
 
@@ -2340,6 +2694,39 @@ void MainWindow::requestNextMovieExportFrame()
     if (movieExportNextFrameIndex_ >= movieExportTimeValues_.size()) {
         movieExportPendingEndOfStream_ = true;
         statusBar()->showMessage(tr("Finalizing movie export…"));
+        return;
+    }
+
+    if (movieExportVolumeView_) {
+        const int timeValue = movieExportTimeValues_.at(movieExportNextFrameIndex_);
+        const FrameCoordinateState &state = controller_.coordinateState();
+        if (movieExportSettings_.timeLoopIndex < state.values.size()
+            && state.values.at(movieExportSettings_.timeLoopIndex) == timeValue
+            && cachedVolume_.isValid()) {
+            volumeViewport_->setCameraState(movieExportFrozenCameraState_);
+
+            QImage image = captureCurrentVolumeImage();
+            if (image.isNull()) {
+                finishMovieExportPlayback(tr("The current 3D view could not be captured for movie export."));
+                return;
+            }
+            if (image.size() != movieExportSettings_.outputSize) {
+                image = image.scaled(movieExportSettings_.outputSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            }
+            image = image.convertToFormat(QImage::Format_ARGB32);
+            if (image.isNull()) {
+                finishMovieExportPlayback(tr("The current 3D view could not be prepared for movie export."));
+                return;
+            }
+
+            ++movieExportNextFrameIndex_;
+            consumePreparedMovieExportImage(image);
+            return;
+        }
+
+        movieExportAwaitingFrame_ = true;
+        statusBar()->showMessage(tr("Exporting 3D movie: moving to frame %1…").arg(timeValue));
+        controller_.setCoordinateValue(movieExportSettings_.timeLoopIndex, timeValue);
         return;
     }
 
@@ -2358,9 +2745,97 @@ void MainWindow::requestNextMovieExportFrame()
     controller_.setCoordinateValue(movieExportSettings_.timeLoopIndex, timeValue);
 }
 
+QImage MainWindow::renderMovieExportFrameImage(int timeValue, QString *errorMessage) const
+{
+    if (movieExportSettings_.sourcePath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("No source file is available for movie export.");
+        }
+        return {};
+    }
+
+    QString readerError;
+    std::unique_ptr<DocumentReader> reader = createDocumentReaderForPath(movieExportSettings_.sourcePath, &readerError);
+    if (!reader) {
+        if (errorMessage) {
+            *errorMessage = readerError;
+        }
+        return {};
+    }
+
+    if (!reader->open(movieExportSettings_.sourcePath, &readerError)) {
+        if (errorMessage) {
+            *errorMessage = readerError.isEmpty()
+                ? tr("Failed to open the source file for movie export.")
+                : readerError;
+        }
+        return {};
+    }
+
+    QVector<int> coordinates = movieExportSettings_.fixedCoordinates;
+    if (movieExportSettings_.timeLoopIndex < 0 || movieExportSettings_.timeLoopIndex >= coordinates.size()) {
+        if (errorMessage) {
+            *errorMessage = tr("The selected time loop is unavailable for movie export.");
+        }
+        reader->close();
+        return {};
+    }
+    coordinates[movieExportSettings_.timeLoopIndex] = timeValue;
+
+    int sequenceIndex = -1;
+    if (!reader->sequenceForCoords(coordinates, &sequenceIndex, &readerError)) {
+        if (errorMessage) {
+            *errorMessage = readerError;
+        }
+        reader->close();
+        return {};
+    }
+
+    RawFrame rawFrame = reader->readFrame(sequenceIndex, &readerError);
+    reader->close();
+    if (!rawFrame.isValid()) {
+        if (errorMessage) {
+            *errorMessage = readerError.isEmpty()
+                ? tr("The file reader could not read frame %1.").arg(sequenceIndex + 1)
+                : readerError;
+        }
+        return {};
+    }
+
+    FrameCoordinateState coordinateState;
+    coordinateState.values = coordinates;
+    QImage image = FrameRenderer::render(rawFrame, coordinateState, movieExportFrozenChannelSettings_).image;
+    if (movieExportSettings_.roiRect.isValid() && !movieExportSettings_.roiRect.isEmpty()) {
+        image = image.copy(movieExportSettings_.roiRect);
+    }
+    return image;
+}
+
+QString MainWindow::movieExportBackendUnsupportedReason() const
+{
+    const QString selectedBackend = qEnvironmentVariable("QT_MEDIA_BACKEND");
+    if (selectedBackend.compare(QStringLiteral("ffmpeg"), Qt::CaseInsensitive) == 0) {
+        return {};
+    }
+
+    QStringList libraryPaths = QCoreApplication::libraryPaths();
+    const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
+    if (!qtPluginPath.isEmpty() && !libraryPaths.contains(qtPluginPath)) {
+        libraryPaths.push_back(qtPluginPath);
+    }
+
+    if (hasQtFfmpegMediaPlugin(libraryPaths)) {
+        return tr("Movie export requires Qt's FFmpeg multimedia backend because it uses QVideoFrameInput. "
+                  "Set QT_MEDIA_BACKEND=ffmpeg before creating the application.");
+    }
+
+    return tr("Movie export requires Qt's FFmpeg multimedia backend because it uses QVideoFrameInput. "
+              "This Qt installation does not provide the FFmpeg multimedia plugin.");
+}
+
 void MainWindow::prepareCurrentMovieExportFrame()
 {
-    if (!movieExportInProgress_ || movieExportNextFrameIndex_ >= movieExportTimeValues_.size()) {
+    if (!movieExportInProgress_ || movieExportVolumeView_ || movieExportNextFrameIndex_ >= movieExportTimeValues_.size()) {
         return;
     }
 
@@ -2381,14 +2856,20 @@ void MainWindow::prepareCurrentMovieExportFrame()
         return;
     }
 
+    ++movieExportNextFrameIndex_;
+    consumePreparedMovieExportImage(image);
+}
+
+void MainWindow::consumePreparedMovieExportImage(const QImage &image)
+{
     movieExportAwaitingFrame_ = false;
+
     moviePendingFrame_ = QVideoFrame(image);
     moviePendingFrame_.setStreamFrameRate(movieExportSettings_.fps);
     const qint64 startTimeUs = qRound64((movieExportEncodedFrameCount_ * 1000000.0) / movieExportSettings_.fps);
     const qint64 endTimeUs = qRound64(((movieExportEncodedFrameCount_ + 1) * 1000000.0) / movieExportSettings_.fps);
     moviePendingFrame_.setStartTime(startTimeUs);
     moviePendingFrame_.setEndTime(endTimeUs);
-    ++movieExportNextFrameIndex_;
     trySendMovieExportFrame();
 }
 
@@ -2411,7 +2892,9 @@ void MainWindow::trySendMovieExportFrame()
         movieVideoFrameInputReady_ = false;
         moviePendingFrame_ = {};
         ++movieExportEncodedFrameCount_;
-        statusBar()->showMessage(tr("Exporting movie live: frame %1 of %2…")
+        statusBar()->showMessage((movieExportVolumeView_
+                                      ? tr("Exporting 3D movie: frame %1 of %2…")
+                                      : tr("Exporting movie live: frame %1 of %2…"))
                                      .arg(movieExportEncodedFrameCount_)
                                      .arg(movieExportTimeValues_.size()));
         requestNextMovieExportFrame();
@@ -2458,6 +2941,8 @@ void MainWindow::finishMovieExportPlayback(const QString &errorMessage)
 
 void MainWindow::cleanupMovieExportPlayback()
 {
+    restoreVolumeViewportAfterMovieExport();
+
     if (movieVideoFrameInput_) {
         movieVideoFrameInput_->disconnect(this);
     }
@@ -2490,7 +2975,52 @@ void MainWindow::cleanupMovieExportPlayback()
     movieExportEndOfStreamSent_ = false;
     movieVideoFrameInputReady_ = false;
     movieExportSettings_ = {};
+    movieExportDocumentInfo_ = {};
     setMovieExportUiState(false);
+}
+
+void MainWindow::restoreVolumeViewportAfterMovieExport()
+{
+    if (!movieExportVolumeView_ || !volumeViewport_) {
+        if (!movieExportOriginalChannelSettings_.isEmpty()) {
+            controller_.setChannelSettings(movieExportOriginalChannelSettings_);
+        }
+        movieExportVolumeView_ = false;
+        movieExportFrozenChannelSettings_.clear();
+        movieExportOriginalChannelSettings_.clear();
+        movieExportFrozenCameraState_ = {};
+        movieExportOriginalVolume_ = {};
+        movieExportOriginalCameraState_ = {};
+        movieExportOriginalVolumeStatusText_.clear();
+        movieExportOriginalVolumeCoordsText_.clear();
+        return;
+    }
+
+    if (movieExportOriginalVolume_.isValid()) {
+        volumeViewport_->setVolume(movieExportOriginalVolume_, controller_.channelSettings());
+        volumeViewport_->setCameraState(movieExportOriginalCameraState_);
+    }
+    if (volumeStatusLabel_) {
+        volumeStatusLabel_->setText(movieExportOriginalVolumeStatusText_);
+    }
+    if (volumeCoordsLabel_) {
+        volumeCoordsLabel_->setText(movieExportOriginalVolumeCoordsText_);
+    }
+    if (volumeFitButton_) {
+        volumeFitButton_->setEnabled(movieExportOriginalVolume_.isValid());
+    }
+    if (volumeResetButton_) {
+        volumeResetButton_->setEnabled(movieExportOriginalVolume_.isValid());
+    }
+
+    movieExportVolumeView_ = false;
+    movieExportFrozenChannelSettings_.clear();
+    movieExportOriginalChannelSettings_.clear();
+    movieExportFrozenCameraState_ = {};
+    movieExportOriginalVolume_ = {};
+    movieExportOriginalCameraState_ = {};
+    movieExportOriginalVolumeStatusText_.clear();
+    movieExportOriginalVolumeCoordsText_.clear();
 }
 
 void MainWindow::setMovieExportUiState(bool active)
@@ -2520,6 +3050,15 @@ void MainWindow::setMovieExportUiState(bool active)
     if (volumeViewCheck_) {
         volumeViewCheck_->setEnabled(!active && hasUsableZStack());
     }
+}
+
+QImage MainWindow::captureCurrentVolumeImage() const
+{
+    if (!volumeViewport_) {
+        return {};
+    }
+
+    return volumeViewport_->captureImage();
 }
 
 QString MainWindow::sanitizeToken(const QString &value) const

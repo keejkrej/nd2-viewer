@@ -24,6 +24,37 @@ Options:
 EOF
 }
 
+resolve_generator() {
+  if [[ -n "${CMAKE_GENERATOR:-}" ]]; then
+    printf '%s' "${CMAKE_GENERATOR}"
+  elif command -v ninja >/dev/null 2>&1; then
+    printf '%s' "Ninja"
+  else
+    printf '%s' "Unix Makefiles"
+  fi
+}
+
+read_cached_generator() {
+  local candidate_build_dir="$1"
+  local cache_path="${candidate_build_dir}/CMakeCache.txt"
+  local cache_generator=""
+
+  if [[ ! -f "${cache_path}" ]]; then
+    return 0
+  fi
+
+  cache_generator="$(sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "${cache_path}" | head -n 1)"
+  if [[ -n "${cache_generator}" ]]; then
+    printf '%s' "${cache_generator}"
+  fi
+}
+
+reset_build_dir_for_generator_switch() {
+  local candidate_build_dir="$1"
+
+  rm -rf "${candidate_build_dir}"
+}
+
 migrate_release_path() {
   local legacy_path="$1"
   local target_path="$2"
@@ -125,12 +156,19 @@ if [[ ! -f "${qt6_dir}/Qt6Config.cmake" ]]; then
   exit 1
 fi
 
-if [[ -n "${CMAKE_GENERATOR:-}" ]]; then
-  generator="${CMAKE_GENERATOR}"
-elif command -v ninja >/dev/null 2>&1; then
-  generator="Ninja"
-else
-  generator="Unix Makefiles"
+generator="$(resolve_generator)"
+cached_generator="$(read_cached_generator "${build_dir}")"
+
+if [[ -n "${cached_generator}" && "${cached_generator}" != "${generator}" ]]; then
+  if [[ -n "${CMAKE_GENERATOR:-}" ]]; then
+    echo "Build directory '${build_dir}' was configured with '${cached_generator}', but CMAKE_GENERATOR requests '${generator}'." >&2
+    echo "Removing the existing build directory so the requested generator can be used." >&2
+    reset_build_dir_for_generator_switch "${build_dir}"
+  else
+    echo "Switching build directory '${build_dir}' from cached generator '${cached_generator}' to default generator '${generator}'." >&2
+    echo "Removing the existing build directory so the default generator can be used." >&2
+    reset_build_dir_for_generator_switch "${build_dir}"
+  fi
 fi
 
 parallel="${CMAKE_BUILD_PARALLEL_LEVEL:-$(sysctl -n hw.ncpu)}"

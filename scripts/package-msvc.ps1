@@ -6,7 +6,8 @@ param(
     [ValidateSet("NSIS", "ZIP")]
     [string]$Generator = "NSIS",
     [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
-    [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared"
+    [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
+    [string]$VtkDir = $env:VTK_DIR
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,7 +43,8 @@ if ($Generator -eq "NSIS") {
     -Configuration $Configuration `
     -BuildDir $BuildDir `
     -QtRoot $QtRoot `
-    -Nd2SdkRoot $Nd2SdkRoot
+    -Nd2SdkRoot $Nd2SdkRoot `
+    -VtkDir $VtkDir
 
 $exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
 & (Join-Path $PSScriptRoot "msvc-windeployqt.ps1") -QtRoot $QtRoot -ExePath $exePath

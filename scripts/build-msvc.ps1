@@ -3,7 +3,8 @@ param(
     [string]$Configuration = "Debug",
     [string]$BuildDir = "build-msvc",
     [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
-    [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared"
+    [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
+    [string]$VtkDir = $env:VTK_DIR
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,10 @@ if (!(Test-Path $Nd2SdkRoot)) {
     throw "ND2 SDK root not found at '$Nd2SdkRoot'."
 }
 
+if ($VtkDir -and !(Test-Path $VtkDir)) {
+    throw "VTK_DIR not found at '$VtkDir'. Build/install VTK first, or pass the directory containing VTKConfig.cmake."
+}
+
 $configureCommand = @(
     "`"$cmake`"",
     "-S", "`"$repoRoot`"",
@@ -38,6 +43,10 @@ $configureCommand = @(
     "-DQt6_DIR=`"$($qtCmakeDir -replace '\\', '/')`"",
     "-DND2SDK_ROOT=`"$($Nd2SdkRoot -replace '\\', '/')`""
 ) -join " "
+
+if ($VtkDir) {
+    $configureCommand += " -DVTK_DIR=`"$($VtkDir -replace '\\', '/')`""
+}
 
 $buildCommand = @(
     "`"$cmake`"",

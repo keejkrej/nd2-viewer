@@ -27,27 +27,23 @@ ImageViewport::ImageViewport(QWidget *parent)
 
 void ImageViewport::setImage(const QImage &image)
 {
-    const bool preserveView = !fitToWindow_ && !image_.isNull() && !image.isNull();
+    const bool preserveView = !image_.isNull() && !image.isNull();
     const QPointF anchorImagePoint = preserveView ? widgetToImage(viewportCenter()) : QPointF();
 
     image_ = image;
-    if (fitToWindow_) {
-        zoomToFit();
+    if (preserveView) {
+        const QSizeF scaledSize = scaledImageSize();
+        const QPointF centeredTopLeft((width() - scaledSize.width()) / 2.0,
+                                      (height() - scaledSize.height()) / 2.0);
+        const double scale = effectiveScale();
+        panOffset_ = viewportCenter() - centeredTopLeft
+                     - QPointF(anchorImagePoint.x() * scale, anchorImagePoint.y() * scale);
     } else {
-        if (preserveView) {
-            const QSizeF scaledSize = scaledImageSize();
-            const QPointF centeredTopLeft((width() - scaledSize.width()) / 2.0,
-                                          (height() - scaledSize.height()) / 2.0);
-            const double scale = effectiveScale();
-            panOffset_ = viewportCenter() - centeredTopLeft
-                         - QPointF(anchorImagePoint.x() * scale, anchorImagePoint.y() * scale);
-        } else {
-            panOffset_ = {};
-        }
-        clampPanOffset();
-        update();
-        emit zoomChanged(effectiveScale(), fitToWindow_);
+        panOffset_ = {};
     }
+    clampPanOffset();
+    update();
+    emit zoomChanged(effectiveScale(), isAtFittedView());
 
     if (image_.isNull()) {
         setRoiRectInternal({});
@@ -73,29 +69,31 @@ bool ImageViewport::hasImage() const
 
 void ImageViewport::zoomToFit()
 {
-    fitToWindow_ = true;
+    if (image_.isNull()) {
+        return;
+    }
+
+    zoomFactor_ = fittedScaleForCurrentSize();
     panOffset_ = {};
     update();
-    emit zoomChanged(effectiveScale(), fitToWindow_);
+    emit zoomChanged(effectiveScale(), isAtFittedView());
 }
 
 void ImageViewport::setActualSize()
 {
-    fitToWindow_ = false;
     zoomFactor_ = 1.0;
     panOffset_ = {};
     clampPanOffset();
     update();
-    emit zoomChanged(effectiveScale(), fitToWindow_);
+    emit zoomChanged(effectiveScale(), isAtFittedView());
 }
 
 void ImageViewport::setZoomFactor(double zoomFactor)
 {
-    fitToWindow_ = false;
     zoomFactor_ = std::clamp(zoomFactor, 0.05, 64.0);
     clampPanOffset();
     update();
-    emit zoomChanged(effectiveScale(), fitToWindow_);
+    emit zoomChanged(effectiveScale(), isAtFittedView());
 }
 
 double ImageViewport::zoomFactor() const
@@ -105,7 +103,7 @@ double ImageViewport::zoomFactor() const
 
 bool ImageViewport::isFitToWindow() const
 {
-    return fitToWindow_;
+    return isAtFittedView();
 }
 
 void ImageViewport::setInteractionMode(InteractionMode mode)
@@ -179,11 +177,8 @@ void ImageViewport::paintEvent(QPaintEvent *event)
 void ImageViewport::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (fitToWindow_) {
-        emit zoomChanged(effectiveScale(), fitToWindow_);
-    } else {
-        clampPanOffset();
-    }
+    clampPanOffset();
+    emit zoomChanged(effectiveScale(), isAtFittedView());
 }
 
 void ImageViewport::wheelEvent(QWheelEvent *event)
@@ -196,14 +191,13 @@ void ImageViewport::wheelEvent(QWheelEvent *event)
     const QPointF anchorImagePoint = widgetToImage(event->position());
     const double direction = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
 
-    fitToWindow_ = false;
     zoomFactor_ = std::clamp(zoomFactor_ * direction, 0.05, 64.0);
 
     const QPointF newWidgetPoint = imageToWidget(anchorImagePoint);
     panOffset_ += event->position() - newWidgetPoint;
     clampPanOffset();
     update();
-    emit zoomChanged(effectiveScale(), fitToWindow_);
+    emit zoomChanged(effectiveScale(), isAtFittedView());
     event->accept();
 }
 
@@ -239,7 +233,7 @@ void ImageViewport::mouseMoveEvent(QMouseEvent *event)
     if (drawingRoi_) {
         roiDragCurrentImage_ = clampedImagePoint(event->position());
         update();
-    } else if (panning_ && !fitToWindow_) {
+    } else if (panning_) {
         panOffset_ += event->pos() - lastMousePosition_;
         lastMousePosition_ = event->pos();
         clampPanOffset();
@@ -290,11 +284,35 @@ void ImageViewport::mouseDoubleClickEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
 
-    if (fitToWindow_) {
+    if (isAtFittedView()) {
         setActualSize();
     } else {
         zoomToFit();
     }
+}
+
+double ImageViewport::fittedScaleForCurrentSize() const
+{
+    if (image_.isNull()) {
+        return 1.0;
+    }
+
+    const double widthScale = static_cast<double>(width()) / static_cast<double>(image_.width());
+    const double heightScale = static_cast<double>(height()) / static_cast<double>(image_.height());
+    return std::min(widthScale, heightScale);
+}
+
+bool ImageViewport::isAtFittedView() const
+{
+    if (image_.isNull()) {
+        return false;
+    }
+
+    const double fittedScale = fittedScaleForCurrentSize();
+    const double scaleTolerance = std::max(1.0e-6, fittedScale * 1.0e-6);
+    const bool scaleMatches = std::abs(zoomFactor_ - fittedScale) <= scaleTolerance;
+    const bool panMatches = std::abs(panOffset_.x()) <= 0.5 && std::abs(panOffset_.y()) <= 0.5;
+    return scaleMatches && panMatches;
 }
 
 double ImageViewport::effectiveScale() const
@@ -302,14 +320,7 @@ double ImageViewport::effectiveScale() const
     if (image_.isNull()) {
         return 1.0;
     }
-
-    if (!fitToWindow_) {
-        return zoomFactor_;
-    }
-
-    const double widthScale = static_cast<double>(width()) / static_cast<double>(image_.width());
-    const double heightScale = static_cast<double>(height()) / static_cast<double>(image_.height());
-    return std::min(widthScale, heightScale);
+    return zoomFactor_;
 }
 
 QSizeF ImageViewport::scaledImageSize() const
@@ -407,7 +418,7 @@ QRect ImageViewport::normalizedRoiRect(const QRectF &imageRect) const
 
 void ImageViewport::clampPanOffset()
 {
-    if (fitToWindow_ || image_.isNull()) {
+    if (image_.isNull()) {
         panOffset_ = {};
         return;
     }

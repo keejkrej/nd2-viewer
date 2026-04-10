@@ -55,6 +55,8 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *event) override;
 
 private:
+    [[nodiscard]] double fittedScaleForCurrentSize() const;
+    [[nodiscard]] bool isAtFittedView() const;
     [[nodiscard]] double effectiveScale() const;
     [[nodiscard]] QSizeF scaledImageSize() const;
     [[nodiscard]] QRectF imageRect() const;
@@ -72,7 +74,6 @@ private:
 
     QImage image_;
     double zoomFactor_ = 1.0;
-    bool fitToWindow_ = true;
     QPointF panOffset_;
     InteractionMode interactionMode_ = InteractionMode::Pan;
     bool panning_ = false;

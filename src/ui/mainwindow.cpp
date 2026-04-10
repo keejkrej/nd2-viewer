@@ -621,6 +621,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &MainWindow::handleVolumeLoadFinished);
 
     updateDocumentUi();
+
+    // Warm the native VTK widget after the main window is already shown so the
+    // first switch into 3D does not visibly recreate the top-level window.
+    QTimer::singleShot(0, this, [this]() {
+        ensureVolumeViewport();
+    });
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
@@ -768,25 +774,52 @@ void MainWindow::setVolumeViewActive(bool active)
         return;
     }
 
+    if (active) {
+        ensureVolumeViewport();
+    }
+
     applyVolumeViewMode(active);
     updateViewModeButtons();
+}
+
+void MainWindow::triggerViewAction()
+{
+    if (isVolumeViewActive()) {
+        if (volumeViewport_) {
+            volumeViewport_->resetView();
+        }
+        return;
+    }
+
+    if (imageViewport_) {
+        imageViewport_->zoomToFit();
+    }
 }
 
 void MainWindow::updateViewModeButtons()
 {
     const bool volumeActive = isVolumeViewActive();
+    const bool hasDocument = controller_.hasDocument();
+    const bool hasImage = imageViewport_ && imageViewport_->hasImage();
+    const bool volumeReady = volumeViewport_ && volumeViewportHasVolume_ && cachedVolume_.isValid();
 
     if (view2dButton_) {
         const QSignalBlocker blocker(view2dButton_);
         view2dButton_->setChecked(!volumeActive);
+        view2dButton_->setEnabled(!movieExportInProgress_ && hasDocument);
     }
     if (view3dButton_) {
         const QSignalBlocker blocker(view3dButton_);
         view3dButton_->setChecked(volumeActive);
         view3dButton_->setEnabled(!movieExportInProgress_ && hasUsableZStack());
     }
-    if (view2dButton_) {
-        view2dButton_->setEnabled(!movieExportInProgress_);
+    if (viewActionButton_) {
+        viewActionButton_->setVisible(hasDocument);
+        viewActionButton_->setText(volumeActive ? tr("Reset") : tr("Fit"));
+        viewActionButton_->setToolTip(volumeActive
+                                          ? tr("Restore the default 3D camera angle and refit the volume.")
+                                          : tr("Fit the current image to the viewport once."));
+        viewActionButton_->setEnabled(!movieExportInProgress_ && (volumeActive ? volumeReady : hasImage));
     }
 }
 
@@ -1133,6 +1166,9 @@ void MainWindow::updateDocumentUi()
 
     imageViewport_->clearRoi();
     imageViewport_->setImage(controller_.renderedFrame().image);
+    if (imageViewport_->hasImage()) {
+        imageViewport_->zoomToFit();
+    }
     rebuildNavigatorControls();
 
     const bool hasZ = hasUsableZStack();
@@ -1149,13 +1185,9 @@ void MainWindow::updateDocumentUi()
     updateInfoLabel();
     applyZLoopNavigatorLock();
 
-    volumeFitButton_->setEnabled(false);
-    volumeResetButton_->setEnabled(false);
     if (viewModeControl_) {
         viewModeControl_->setVisible(hasZ);
     }
-    volumeFitButton_->setVisible(hasZ);
-    volumeResetButton_->setVisible(hasZ);
     updateViewModeButtons();
 }
 
@@ -1181,7 +1213,12 @@ void MainWindow::updateChannelUi()
 
 void MainWindow::updateFrameUi()
 {
+    const bool hadImage = imageViewport_->hasImage();
     imageViewport_->setImage(controller_.renderedFrame().image);
+    if (!hadImage && imageViewport_->hasImage() && !isVolumeViewActive()) {
+        imageViewport_->zoomToFit();
+    }
+    updateViewModeButtons();
     updateInfoLabel();
     if (!isVolumeViewActive() && timePlaybackActive_ && timePlaybackAwaitingFrame_) {
         completeTimePlaybackStep();
@@ -1337,6 +1374,7 @@ void MainWindow::buildCentralUi()
 
     viewModeControl_ = new QWidget(viewModeRow);
     viewModeControl_->setObjectName(QStringLiteral("viewModeSwitch"));
+    viewModeControl_->setVisible(false);
     viewModeControl_->setStyleSheet(QStringLiteral(
         "#viewModeSwitch {"
         " border: 1px solid palette(mid);"
@@ -1367,14 +1405,11 @@ void MainWindow::buildCentralUi()
     viewModeSwitchLayout->addWidget(view3dButton_);
     viewModeLayout->addWidget(viewModeControl_);
 
-    volumeFitButton_ = new QPushButton(tr("Fit To Volume"), viewModeRow);
-    volumeFitButton_->setEnabled(false);
-    volumeFitButton_->setToolTip(tr("Keep the current angle and reframe the visible volume to fill the viewport."));
-    volumeResetButton_ = new QPushButton(tr("Reset View"), viewModeRow);
-    volumeResetButton_->setEnabled(false);
-    volumeResetButton_->setToolTip(tr("Restore the default camera angle and refit the volume."));
-    viewModeLayout->addWidget(volumeFitButton_);
-    viewModeLayout->addWidget(volumeResetButton_);
+    viewActionButton_ = new QPushButton(tr("Fit"), viewModeRow);
+    viewActionButton_->setEnabled(false);
+    viewActionButton_->setVisible(false);
+    viewActionButton_->setToolTip(tr("Fit the current image to the viewport once."));
+    viewModeLayout->addWidget(viewActionButton_);
     viewModeLayout->addStretch(1);
 
     imageViewport_ = new ImageViewport(canvasPane);
@@ -1384,11 +1419,7 @@ void MainWindow::buildCentralUi()
     volumeOuterLayout->setContentsMargins(0, 0, 0, 0);
     volumeOuterLayout->setSpacing(0);
 
-    volumeViewport_ = new VolumeViewport3D(volumePage_);
-    volumeOuterLayout->addWidget(volumeViewport_, 1);
-
-    connect(volumeFitButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::fitToVolume);
-    connect(volumeResetButton_, &QPushButton::clicked, volumeViewport_, &VolumeViewport3D::resetView);
+    connect(viewActionButton_, &QPushButton::clicked, this, &MainWindow::triggerViewAction);
 
     viewerStack_ = new QStackedWidget(canvasPane);
     viewerStack_->addWidget(imageViewport_);
@@ -2013,6 +2044,23 @@ void MainWindow::syncVolumeViewportChannelSettings()
     volumeViewport_->setChannelSettings(controller_.channelSettings());
 }
 
+void MainWindow::ensureVolumeViewport()
+{
+    if (volumeViewport_ || !volumePage_) {
+        return;
+    }
+
+    auto *volumeOuterLayout = qobject_cast<QVBoxLayout *>(volumePage_->layout());
+    if (!volumeOuterLayout) {
+        volumeOuterLayout = new QVBoxLayout(volumePage_);
+        volumeOuterLayout->setContentsMargins(0, 0, 0, 0);
+        volumeOuterLayout->setSpacing(0);
+    }
+
+    volumeViewport_ = new VolumeViewport3D(volumePage_);
+    volumeOuterLayout->addWidget(volumeViewport_, 1);
+}
+
 void MainWindow::setLiveAutoForAllChannels(bool enabled)
 {
     controller_.setLiveAutoEnabled(enabled);
@@ -2032,6 +2080,10 @@ void MainWindow::applyVolumeViewMode(bool volumeViewActive)
         return;
     }
 
+    if (volumeViewActive) {
+        ensureVolumeViewport();
+    }
+
     viewerStack_->setCurrentIndex(volumeViewActive ? 1 : 0);
     channelControlsWidget_->setLiveAutoInteractive(!volumeViewActive);
     channelControlsWidget_->setAutoContrastTuningEnabled(!volumeViewActive);
@@ -2045,18 +2097,15 @@ void MainWindow::applyVolumeViewMode(bool volumeViewActive)
                 volumeViewport_->setVolume(cachedVolume_, controller_.channelSettings());
                 volumeViewportHasVolume_ = true;
             }
-            volumeFitButton_->setEnabled(true);
-            volumeResetButton_->setEnabled(true);
             if (!volumeViewport_->lastError().isEmpty()) {
                 QMessageBox::warning(this, tr("3D View"), volumeViewport_->lastError());
             }
         } else {
             startVolumeLoad();
         }
-    } else {
-        volumeFitButton_->setEnabled(false);
-        volumeResetButton_->setEnabled(false);
     }
+
+    updateViewModeButtons();
 }
 
 void MainWindow::startVolumeLoad()
@@ -2064,6 +2113,8 @@ void MainWindow::startVolumeLoad()
     if (!controller_.hasDocument() || !hasUsableZStack() || !isVolumeViewActive()) {
         return;
     }
+
+    ensureVolumeViewport();
 
     if (volumeViewport_ && cachedVolume_.isValid()) {
         pendingVolumeCameraState_ = volumeViewport_->cameraState();
@@ -2074,9 +2125,8 @@ void MainWindow::startVolumeLoad()
     ++volumeLoadGeneration_;
     const int generation = volumeLoadGeneration_;
 
-    volumeFitButton_->setEnabled(false);
-    volumeResetButton_->setEnabled(false);
     statusBar()->showMessage(tr("Loading 3D volume…"));
+    updateViewModeButtons();
 
     const QString path = controller_.currentPath();
     const DocumentInfo info = controller_.documentInfo();
@@ -2136,9 +2186,8 @@ void MainWindow::handleVolumeLoadFinished()
         volumeViewport_->setCameraState(pendingVolumeCameraState_);
     }
     pendingVolumeCameraState_ = {};
-    volumeFitButton_->setEnabled(true);
-    volumeResetButton_->setEnabled(true);
     statusBar()->showMessage(tr("Loaded 3D volume %1").arg(volumeViewport_->renderSummary()), 3000);
+    updateViewModeButtons();
     if (timePlaybackActive_ && timePlaybackAwaitingFrame_) {
         completeTimePlaybackStep();
     }
@@ -2780,13 +2829,6 @@ void MainWindow::restoreVolumeViewportAfterMovieExport()
     } else {
         volumeViewportHasVolume_ = false;
     }
-    if (volumeFitButton_) {
-        volumeFitButton_->setEnabled(movieExportOriginalVolume_.isValid());
-    }
-    if (volumeResetButton_) {
-        volumeResetButton_->setEnabled(movieExportOriginalVolume_.isValid());
-    }
-
     movieExportVolumeView_ = false;
     movieExportFrozenChannelSettings_.clear();
     movieExportOriginalChannelSettings_.clear();
@@ -2794,6 +2836,7 @@ void MainWindow::restoreVolumeViewportAfterMovieExport()
     movieExportFrozenCameraState_ = {};
     movieExportOriginalVolume_ = {};
     movieExportOriginalCameraState_ = {};
+    updateViewModeButtons();
 }
 
 void MainWindow::setMovieExportUiState(bool active)

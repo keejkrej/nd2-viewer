@@ -245,6 +245,16 @@ target_link_libraries(nd2-viewer
 
 vtk_module_autoinit(TARGETS nd2-viewer MODULES ${ND2VIEWER_VTK_LIBS})
 
+if(WIN32)
+  add_custom_command(TARGET nd2-viewer POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      $<TARGET_RUNTIME_DLLS:nd2-viewer>
+      "$<TARGET_FILE_DIR:nd2-viewer>"
+    COMMAND_EXPAND_LISTS
+    COMMENT "Copying runtime DLL dependencies"
+  )
+endif()
+
 if(APPLE)
   install(TARGETS nd2-viewer
     BUNDLE DESTINATION "."
@@ -321,6 +331,7 @@ if(NOT APPLE)
     DESTINATION "."
     COMPONENT Runtime
     PATTERN "nd2-viewer.exe" EXCLUDE
+    PATTERN "cpack-nsis-wrapper.exe" EXCLUDE
     PATTERN "*.ilk" EXCLUDE
     PATTERN "*.pdb" EXCLUDE
   )
@@ -350,6 +361,16 @@ set(CPACK_PACKAGE_EXECUTABLES "nd2-viewer" "nd2-viewer")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 
 if(WIN32)
+  add_executable(cpack-nsis-wrapper
+    scripts/cpack-nsis-wrapper.cpp
+  )
+  set_target_properties(cpack-nsis-wrapper PROPERTIES
+    AUTOMOC OFF
+    AUTORCC OFF
+    AUTOUIC OFF
+  )
+
+  file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/bin/cpack-nsis-wrapper.exe" _cpack_nsis_executable)
   set(CPACK_GENERATOR "NSIS")
   set(CPACK_NSIS_INSTALL_ROOT "$LOCALAPPDATA\\\\Programs")
   set(CPACK_NSIS_DISPLAY_NAME "nd2-viewer")
@@ -358,10 +379,11 @@ if(WIN32)
   set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
   set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app-icon.ico")
   # CPack's stock NSIS template hard-codes admin/UAC behavior; nsis-cpack.ps1 patches
-  # the generated script then runs makensis (argument normalization matches old C++ wrapper).
-  set(CPACK_NSIS_EXECUTABLE "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
+  # the generated script then runs makensis. CPack also probes /VERSION directly,
+  # so this must be a real executable rather than powershell.exe with pre-arguments.
+  set(CPACK_NSIS_EXECUTABLE "${_cpack_nsis_executable}")
   set(CPACK_NSIS_EXECUTABLE_PRE_ARGUMENTS
-    "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+    "--powershell-script"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/nsis-cpack.ps1"
   )
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")

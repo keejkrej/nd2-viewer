@@ -121,7 +121,9 @@ private:
     [[nodiscard]] bool hasUsableZStack() const;
     [[nodiscard]] bool isVolumeViewActive() const;
     [[nodiscard]] bool volumeMatchesCurrentFixedCoordinates() const;
+    void ensureVolumeViewport();
     void setVolumeViewActive(bool active);
+    void triggerViewAction();
     void updateViewModeButtons();
     void setMovieExportUiState(bool active);
     void startMovieExportPlayback(const MovieExportSettings &settings);
@@ -153,10 +155,9 @@ private:
     QWidget *viewModeControl_ = nullptr;
     QPushButton *view2dButton_ = nullptr;
     QPushButton *view3dButton_ = nullptr;
+    QPushButton *viewActionButton_ = nullptr;
     QWidget *volumePage_ = nullptr;
     VolumeViewport3D *volumeViewport_ = nullptr;
-    QPushButton *volumeFitButton_ = nullptr;
-    QPushButton *volumeResetButton_ = nullptr;
     QFutureWatcher<VolumeLoadResult> volumeWatcher_;
     int volumeLoadGeneration_ = 0;
     RawVolume cachedVolume_;

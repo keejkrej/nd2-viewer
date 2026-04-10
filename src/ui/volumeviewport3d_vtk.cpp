@@ -26,6 +26,17 @@
 namespace
 {
 constexpr int kFallbackMaxTextureSize3D = 2048;
+constexpr double kDefaultYawDegrees = -35.0;
+constexpr double kDefaultPitchDegrees = 25.0;
+
+QVector3D cameraOffsetForYawPitch(double yawDegrees, double pitchDegrees)
+{
+    const double yawRadians = qDegreesToRadians(yawDegrees);
+    const double pitchRadians = qDegreesToRadians(pitchDegrees);
+    return QVector3D(static_cast<float>(std::cos(pitchRadians) * std::sin(yawRadians)),
+                     static_cast<float>(std::sin(pitchRadians)),
+                     static_cast<float>(std::cos(pitchRadians) * std::cos(yawRadians)));
+}
 
 QString formatSummary(const RawVolume &source, int renderWidth, int renderHeight, int renderDepth,
                       int factorX, int factorY, int factorZ)
@@ -60,7 +71,10 @@ VolumeViewport3DBackendVtk::VolumeViewport3DBackendVtk(QWidget *parent)
     interactorStyle_ = vtkSmartPointer<vtkInteractorStyleTrackballCamera>::New();
     if (renderWindow_->GetInteractor()) {
         renderWindow_->GetInteractor()->SetInteractorStyle(interactorStyle_);
+        renderWindow_->GetInteractor()->SetDesiredUpdateRate(30.0);
+        renderWindow_->GetInteractor()->SetStillUpdateRate(0.01);
     }
+    renderWindow_->SetDesiredUpdateRate(30.0);
 }
 
 QWidget *VolumeViewport3DBackendVtk::widget()
@@ -103,7 +117,6 @@ void VolumeViewport3DBackendVtk::setVolume(const RawVolume &volume,
     renderSummary_ = prepared.summary;
     syncChannelVisuals();
     resetView();
-    renderNow();
 }
 
 void VolumeViewport3DBackendVtk::setChannelSettings(const QVector<ChannelRenderSettings> &channelSettings)
@@ -122,8 +135,23 @@ void VolumeViewport3DBackendVtk::resetView()
 
     renderer_->ResetCamera(bounds);
     vtkCamera *camera = renderer_->GetActiveCamera();
-    camera->Azimuth(-35.0);
-    camera->Elevation(25.0);
+    double fittedPosition[3];
+    double fittedFocalPoint[3];
+    camera->GetPosition(fittedPosition);
+    camera->GetFocalPoint(fittedFocalPoint);
+    const double fittedDistance = std::sqrt(vtkMath::Distance2BetweenPoints(fittedPosition, fittedFocalPoint));
+
+    const double center[3] = {
+        0.5 * (bounds[0] + bounds[1]),
+        0.5 * (bounds[2] + bounds[3]),
+        0.5 * (bounds[4] + bounds[5])
+    };
+    const QVector3D offset = cameraOffsetForYawPitch(kDefaultYawDegrees, kDefaultPitchDegrees);
+    camera->SetFocalPoint(center);
+    camera->SetPosition(center[0] + (offset.x() * fittedDistance),
+                        center[1] + (offset.y() * fittedDistance),
+                        center[2] + (offset.z() * fittedDistance));
+    camera->SetViewUp(0.0, 1.0, 0.0);
     camera->OrthogonalizeViewUp();
     renderer_->ResetCameraClippingRange(bounds);
     renderNow();
@@ -248,6 +276,13 @@ int VolumeViewport3DBackendVtk::queryMaxTextureSize3D()
     if (context()) {
         makeCurrent();
         if (QOpenGLFunctions *functions = context()->functions()) {
+            const char *renderer = reinterpret_cast<const char *>(functions->glGetString(GL_RENDERER));
+            const char *vendor = reinterpret_cast<const char *>(functions->glGetString(GL_VENDOR));
+            const char *version = reinterpret_cast<const char *>(functions->glGetString(GL_VERSION));
+            qInfo("VTK 3D OpenGL context: renderer=%s vendor=%s version=%s",
+                  renderer ? renderer : "unknown",
+                  vendor ? vendor : "unknown",
+                  version ? version : "unknown");
             functions->glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &queried);
         }
         doneCurrent();
@@ -411,6 +446,9 @@ void VolumeViewport3DBackendVtk::rebuildPipelines(const PreparedVolumeData &prep
         ChannelPipeline &pipeline = channels_[channelIndex];
         pipeline.imageData = buildImageData(prepared, channelIndex);
         pipeline.mapper = vtkSmartPointer<vtkSmartVolumeMapper>::New();
+        pipeline.mapper->SetRequestedRenderModeToGPU();
+        pipeline.mapper->SetInteractiveUpdateRate(30.0);
+        pipeline.mapper->InteractiveAdjustSampleDistancesOn();
         // Napari defaults 3D image layers to MIP; use the same baseline here so
         // low=0 auto-contrast settings do not turn the full slab into an opaque block.
         pipeline.mapper->SetBlendModeToMaximumIntensity();

@@ -4,8 +4,8 @@ set -euo pipefail
 
 build_dir="${BUILD_DIR:-build-macos}"
 build_type="${CMAKE_BUILD_TYPE:-Debug}"
-qt6_dir="${Qt6_DIR:-/opt/homebrew/lib/cmake/Qt6}"
-vtk_dir="${VTK_DIR:-}"
+qt6_dir="${Qt6_DIR:-$HOME/Qt/6.11.0/macos/lib/cmake/Qt6}"
+vtk_dir="${VTK_DIR:-$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5}"
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
@@ -15,8 +15,8 @@ Usage: ./scripts/build-macos.sh [options]
 Options:
   --configuration <type>  CMake build type. Default: Debug
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos
-  --qt6-dir <path>        Path to Qt6Config.cmake. Default: /opt/homebrew/lib/cmake/Qt6
-  --vtk-dir <path>        Path to VTKConfig.cmake. Default: auto-detect in CMake
+  --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
+  --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF

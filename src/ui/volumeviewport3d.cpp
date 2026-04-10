@@ -1,10 +1,6 @@
 #include "ui/volumeviewport3d.h"
 
-#include "ui/volumeviewport3d_gl.h"
-
-#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
 #include "ui/volumeviewport3d_vtk.h"
-#endif
 
 #include <QVBoxLayout>
 
@@ -14,11 +10,7 @@ VolumeViewport3D::VolumeViewport3D(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
     backend_ = std::make_unique<VolumeViewport3DBackendVtk>(this);
-#else
-    backend_ = std::make_unique<VolumeViewport3DBackendGl>(this);
-#endif
 
     layout->addWidget(backend_->widget());
 }

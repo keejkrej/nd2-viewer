@@ -14,9 +14,7 @@
 
 #include <algorithm>
 
-#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
 #include <QVTKOpenGLNativeWidget.h>
-#endif
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -62,6 +60,17 @@ void preferQtFfmpegMediaBackendIfAvailable()
     } else {
         qInfo("Qt FFmpeg multimedia plugin not found; leaving QT_MEDIA_BACKEND unset");
     }
+}
+
+void forceQtPluginPathsToActiveQt()
+{
+    const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
+    if (qtPluginPath.isEmpty()) {
+        return;
+    }
+
+    qputenv("QT_PLUGIN_PATH", qtPluginPath.toUtf8());
+    qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", QDir(qtPluginPath).filePath(QStringLiteral("platforms")).toUtf8());
 }
 
 void appMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
@@ -124,16 +133,11 @@ void setupLogging()
 
 int main(int argc, char *argv[])
 {
-    QSurfaceFormat format;
-#if defined(Q_OS_MACOS) && defined(ND2VIEWER_HAS_VTK_3D)
-    format = QVTKOpenGLNativeWidget::defaultFormat();
+    QSurfaceFormat format = QVTKOpenGLNativeWidget::defaultFormat();
     format.setDepthBufferSize(std::max(format.depthBufferSize(), 24));
-#else
-    format.setDepthBufferSize(24);
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-#endif
     QSurfaceFormat::setDefaultFormat(format);
+
+    forceQtPluginPathsToActiveQt();
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("nd2-viewer"));

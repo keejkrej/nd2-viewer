@@ -2,6 +2,41 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.4] - 2026-04-10
+
+### Added
+- Added an integrated 3D viewer mode inside the main window, replacing the older separate 3D window workflow.
+- Added VTK-backed volume rendering support with shared 3D viewport infrastructure, volume loading helpers, and dedicated VTK bootstrap scripts for Windows and macOS.
+- Added 3D frame export and 3D movie export support for z-stack datasets.
+- Added time playback controls for time-series datasets, including explicit `start`, `end`, and `step` handling shared with movie export.
+- Added macOS app icon assets and updated macOS deployment helpers for bundled builds.
+
+### Changed
+- Bumped the project version to `0.1.4`.
+- Simplified the main viewer layout into a top navigation area with a `Viewer | Channels` content split and moved overview and metadata into a `File Info` dialog.
+- Replaced the old `Tools > 3D View` detached-window flow with an in-place `2D` / `3D` switch in the main viewer.
+- Reworked channel controls so `Auto Contrast` and `Live Auto` are global controls, while per-channel rows now focus on visibility, color, thresholds, and 2D-only percentile tuning.
+- Moved `Fit To Volume` and `Reset View` beside the `2D` / `3D` switch and removed inline 3D status labels from the viewer.
+- Changed movie export to use the current shared frame-range model and current viewer state more consistently across 2D and 3D export flows.
+- Removed the frame cache from document loading and kept frame preparation focused on the current navigation state.
+- Refactored Windows and macOS build and packaging scripts around the current VTK-required toolchain and CPack packaging flow.
+
+### Fixed
+- Preserved the loaded 3D volume when switching between 2D and 3D so returning to 3D does not trigger an unnecessary reload.
+- Made time playback in 3D wait for each volume load and render step to finish before advancing.
+- Changed 3D auto contrast to aggregate per-z 2D slice results instead of using one whole-volume histogram.
+- Removed 3D live-auto percentile tuning from the dialog flow and restricted percentile tuning back to 2D, avoiding expensive full-stack recomputation during drag/edit interactions.
+- Flipped the VTK 3D volume Y orientation so the 3D render aligns with the 2D top-left image origin.
+- Cleaned up no-file empty states across the navigation, canvas, and channel controls, and hid controls that are not useful before a file is loaded.
+
+### Build And Packaging
+- Made VTK a required dependency on both Windows and macOS builds.
+- Added `build-vtk-msvc.ps1` and `build-vtk-macos.sh` helper scripts for bootstrapping the supported VTK toolchain.
+- Updated the packaging scripts to better support release bundling on both platforms, including the current NSIS and DMG flows.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` for the VTK-required build flow, current 3D workflow, validation expectations, and the `0.1.4` packaging output example.
+
 ## [0.1.3] - 2026-04-02
 
 ### Changed

@@ -57,7 +57,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output should now use the `0.1.3` version string, for example `dist\nd2-viewer-0.1.3-win64.exe`.
+- A successful recent package output should now use the `0.1.4` version string, for example `dist\nd2-viewer-0.1.4-win64.exe`.
 - CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
 - `scripts/package-macos.sh` builds a release `.app` bundle and writes a DMG into `dist`.
 

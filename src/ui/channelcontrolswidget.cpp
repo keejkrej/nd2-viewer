@@ -179,6 +179,11 @@ void ChannelRowWidget::setAutoContrastControlsVisible(bool visible)
     autoButton_->setVisible(visible);
 }
 
+void ChannelRowWidget::setLiveAutoInteractive(bool interactive)
+{
+    autoCheck_->setEnabled(interactive);
+}
+
 ChannelRenderSettings ChannelRowWidget::currentSettings() const
 {
     ChannelRenderSettings settings = settings_;
@@ -259,6 +264,13 @@ void ChannelControlsWidget::setAutoContrastControlsVisible(bool visible)
     autoAllButton_->setVisible(visible);
     for (ChannelRowWidget *row : std::as_const(rows_)) {
         row->setAutoContrastControlsVisible(visible);
+    }
+}
+
+void ChannelControlsWidget::setLiveAutoInteractive(bool interactive)
+{
+    for (ChannelRowWidget *row : std::as_const(rows_)) {
+        row->setLiveAutoInteractive(interactive);
     }
 }
 

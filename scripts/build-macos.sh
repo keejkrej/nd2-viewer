@@ -5,6 +5,7 @@ set -euo pipefail
 build_dir="${BUILD_DIR:-build-macos}"
 build_type="${CMAKE_BUILD_TYPE:-Debug}"
 qt6_dir="${Qt6_DIR:-/opt/homebrew/lib/cmake/Qt6}"
+vtk_dir="${VTK_DIR:-}"
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
@@ -15,6 +16,7 @@ Options:
   --configuration <type>  CMake build type. Default: Debug
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos
   --qt6-dir <path>        Path to Qt6Config.cmake. Default: /opt/homebrew/lib/cmake/Qt6
+  --vtk-dir <path>        Path to VTKConfig.cmake. Default: auto-detect in CMake
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
@@ -32,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --qt6-dir)
       qt6_dir="$2"
+      shift 2
+      ;;
+    --vtk-dir)
+      vtk_dir="$2"
       shift 2
       ;;
     --nd2sdk-root)
@@ -62,12 +68,19 @@ fi
 
 parallel="${CMAKE_BUILD_PARALLEL_LEVEL:-$(sysctl -n hw.ncpu)}"
 
-cmake \
-  -S "${repo_root}" \
-  -B "${repo_root}/${build_dir}" \
-  -G "${generator}" \
-  -DCMAKE_BUILD_TYPE="${build_type}" \
-  -DQt6_DIR="${qt6_dir}" \
+cmake_args=(
+  -S "${repo_root}"
+  -B "${repo_root}/${build_dir}"
+  -G "${generator}"
+  -DCMAKE_BUILD_TYPE="${build_type}"
+  -DQt6_DIR="${qt6_dir}"
   -DND2SDK_ROOT="${nd2sdk_root}"
+)
+
+if [[ -n "${vtk_dir}" ]]; then
+  cmake_args+=(-DVTK_DIR="${vtk_dir}")
+fi
+
+cmake "${cmake_args[@]}"
 
 cmake --build "${repo_root}/${build_dir}" --parallel "${parallel}"

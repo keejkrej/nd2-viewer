@@ -11,6 +11,7 @@ struct VolumeLoadResult
     RawVolume volume;
     QVector<ChannelRenderSettings> channelSettings;
     QString error;
+    int loadRequestId = 0;
 };
 
 class VolumeLoader

@@ -142,35 +142,6 @@ void ImageViewport::clearRoi()
     setRoiRectInternal({});
 }
 
-void ImageViewport::contextMenuEvent(QContextMenuEvent *event)
-{
-    if (!hasImage() || !isPointInsideImage(event->pos())) {
-        event->ignore();
-        return;
-    }
-
-    QMenu menu(this);
-    QAction *saveAction = menu.addAction(tr("Export Current Frame..."));
-    QAction *exportRoiAction = menu.addAction(tr("Export Current ROI..."));
-    menu.addSeparator();
-    QAction *exportMovieAction = menu.addAction(tr("Export Movie..."));
-    QAction *exportRoiMovieAction = menu.addAction(tr("Export ROI Movie..."));
-    exportRoiAction->setEnabled(hasRoi());
-    exportRoiMovieAction->setEnabled(hasRoi());
-
-    QAction *chosenAction = menu.exec(event->globalPos());
-    if (chosenAction == saveAction) {
-        emit saveImageRequested();
-    } else if (chosenAction == exportRoiAction) {
-        emit exportRoiRequested();
-    } else if (chosenAction == exportMovieAction) {
-        emit exportMovieRequested();
-    } else if (chosenAction == exportRoiMovieAction) {
-        emit exportRoiMovieRequested();
-    }
-    event->accept();
-}
-
 void ImageViewport::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)

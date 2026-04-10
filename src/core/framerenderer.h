@@ -24,6 +24,7 @@ class FrameRenderer
 public:
     static QVector<ChannelRenderSettings> defaultChannelSettings(const DocumentInfo &info);
     static ChannelAutoContrastAnalysis analyzeChannel(const RawFrame &frame, int channelIndex, int histogramBinCount = 256);
+    static ChannelAutoContrastAnalysis analyzeChannel(const RawVolume &volume, int channelIndex, int histogramBinCount = 256);
     static bool applyAutoContrastToChannel(const ChannelAutoContrastAnalysis &analysis, ChannelRenderSettings &settings);
     static bool applyAutoContrast(const RawFrame &frame, QVector<ChannelRenderSettings> &settings);
     [[nodiscard]] static double percentileToValue(const ChannelAutoContrastAnalysis &analysis, double percentile);

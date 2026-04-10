@@ -7,7 +7,7 @@ param(
     [string]$Generator = "NSIS",
     [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
     [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
-    [string]$VtkDir = $env:VTK_DIR
+    [string]$VtkDir = ""
 )
 
 $ErrorActionPreference = "Stop"

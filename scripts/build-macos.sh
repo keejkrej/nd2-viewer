@@ -5,7 +5,15 @@ set -euo pipefail
 build_dir="${BUILD_DIR:-build-macos}"
 build_type="${CMAKE_BUILD_TYPE:-Debug}"
 qt6_dir="${Qt6_DIR:-$HOME/Qt/6.11.0/macos/lib/cmake/Qt6}"
-vtk_dir="${VTK_DIR:-$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5}"
+vtk_install_dir_default="$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5"
+vtk_build_dir_default="$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5"
+if [[ -n "${VTK_DIR:-}" ]]; then
+  vtk_dir="${VTK_DIR}"
+elif [[ -f "${vtk_install_dir_default}/vtk-config.cmake" || -f "${vtk_install_dir_default}/VTKConfig.cmake" ]]; then
+  vtk_dir="${vtk_install_dir_default}"
+else
+  vtk_dir="${vtk_build_dir_default}"
+fi
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
@@ -16,7 +24,7 @@ Options:
   --configuration <type>  CMake build type. Default: Debug
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos
   --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
-  --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5
+  --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5, fallback ~/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF

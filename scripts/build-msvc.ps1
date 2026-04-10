@@ -4,7 +4,7 @@ param(
     [string]$BuildDir = "build-msvc",
     [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
     [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
-    [string]$VtkDir = $env:VTK_DIR
+    [string]$VtkDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +28,19 @@ if (!(Test-Path $qtCmakeDir)) {
 
 if (!(Test-Path $Nd2SdkRoot)) {
     throw "ND2 SDK root not found at '$Nd2SdkRoot'."
+}
+
+$defaultVtkInstallDir = Join-Path $HOME "opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5"
+$defaultVtkBuildDir = Join-Path $HOME "build\vtk-9.5.2-qt611\lib\cmake\vtk-9.5"
+
+if ([string]::IsNullOrWhiteSpace($VtkDir)) {
+    if ($env:VTK_DIR) {
+        $VtkDir = $env:VTK_DIR
+    } elseif (Test-Path $defaultVtkInstallDir) {
+        $VtkDir = $defaultVtkInstallDir
+    } elseif (Test-Path $defaultVtkBuildDir) {
+        $VtkDir = $defaultVtkBuildDir
+    }
 }
 
 if ($VtkDir -and !(Test-Path $VtkDir)) {

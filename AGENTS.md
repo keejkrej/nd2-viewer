@@ -12,17 +12,20 @@
 - On Windows, pass `-VtkDir` to the PowerShell scripts or set `VTK_DIR` in the environment when CMake cannot already resolve `VTKConfig.cmake`.
 - On macOS, the current default Qt path is `$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`.
 - On macOS, the current default VTK path is `$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`, with a fallback to `$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`.
-- When documenting or recreating the local toolchain, use a Qt-enabled VTK `9.5.2` build with `VTK_GROUP_ENABLE_Qt=YES` and `VTK_BUILD_TESTING=OFF`.
+- When documenting or recreating the local toolchain, use a Qt-enabled VTK `9.5.2` build with `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`.
+- The VTK bootstrap scripts build only the module set `nd2-viewer` links against, plus required VTK dependencies. They do not try to build every available VTK module.
 - Windows VTK bootstrap example:
-  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with MSVC + Ninja, `Qt6_DIR=C:\Qt\6.11.0\msvc2022_64\lib\cmake\Qt6`, and `CMAKE_INSTALL_PREFIX=C:\opt\vtk-9.5.2-qt611`
-  - after install, use `VTK_DIR=C:\opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`
+  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with MSVC + Ninja, `Qt6_DIR=C:\Qt\6.11.0\msvc2022_64\lib\cmake\Qt6`, and `CMAKE_INSTALL_PREFIX=%USERPROFILE%\opt\vtk-9.5.2-qt611`
+  - after install, use `VTK_DIR=%USERPROFILE%\opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`
 - macOS VTK bootstrap example:
-  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`, `CMAKE_INSTALL_PREFIX=$HOME/opt/vtk-9.5.2-qt611`, `VTK_GROUP_ENABLE_Qt=YES`, and `VTK_BUILD_TESTING=OFF`
+  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`, `CMAKE_INSTALL_PREFIX=$HOME/opt/vtk-9.5.2-qt611`, `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`
   - after install, use `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`
 - `libCZI` must exist at `third_party/libczi`; if it is missing, clone it with `git clone https://github.com/ZEISS/libczi.git third_party/libczi`.
 
 ## Preferred Build And Run Commands
 
+- Bootstrap VTK on Windows: `.\scripts\build-vtk-msvc.ps1`
+- Bootstrap VTK on macOS: `./scripts/build-vtk-macos.sh`
 - Day-to-day debug build: `.\scripts\build-msvc.ps1`
 - Run the built app: `.\build-msvc\bin\nd2-viewer.exe` (or your chosen `-BuildDir`)
 - Release packaging entrypoint: `.\scripts\package-msvc.ps1`

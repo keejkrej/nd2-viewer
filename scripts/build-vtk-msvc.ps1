@@ -1,4 +1,7 @@
 param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration,
     [string]$VtkRef = "v9.5.2",
     [string]$SourceDir = "",
     [string]$BuildDir = "",
@@ -8,14 +11,48 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+function Get-DefaultVtkRoot([string]$ConfigurationName, [bool]$InstallTree) {
+    $suffix = if ($ConfigurationName -eq "Debug") { "debug" } else { "release" }
+    $root = if ($InstallTree) { "opt" } else { "build" }
+    return Join-Path $HOME "$root\vtk-9.5.2-qt611-$suffix"
+}
+
+function Get-LegacyReleaseVtkRoot([bool]$InstallTree) {
+    $root = if ($InstallTree) { "opt" } else { "build" }
+    return Join-Path $HOME "$root\vtk-9.5.2-qt611"
+}
+
+function Move-LegacyReleaseTree([string]$LegacyPath, [string]$TargetPath) {
+    if ((Test-Path $LegacyPath) -and (Test-Path $TargetPath)) {
+        throw "Both the legacy release VTK path '$LegacyPath' and the new release path '$TargetPath' exist. Remove or rename one of them before continuing."
+    }
+    if (Test-Path $LegacyPath) {
+        Move-Item -LiteralPath $LegacyPath -Destination $TargetPath
+        Write-Host "Renamed legacy release VTK path '$LegacyPath' -> '$TargetPath'."
+    }
+}
+
+$sourceDirProvided = -not [string]::IsNullOrWhiteSpace($SourceDir)
+$buildDirProvided = -not [string]::IsNullOrWhiteSpace($BuildDir)
+$installDirProvided = -not [string]::IsNullOrWhiteSpace($InstallDir)
+
+if (-not $sourceDirProvided) {
     $SourceDir = Join-Path $HOME "src\VTK"
 }
-if ([string]::IsNullOrWhiteSpace($BuildDir)) {
-    $BuildDir = Join-Path $HOME "build\vtk-9.5.2-qt611"
+if (-not $buildDirProvided) {
+    $BuildDir = Get-DefaultVtkRoot $Configuration $false
 }
-if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    $InstallDir = Join-Path $HOME "opt\vtk-9.5.2-qt611"
+if (-not $installDirProvided) {
+    $InstallDir = Get-DefaultVtkRoot $Configuration $true
+}
+
+if ($Configuration -eq "Release") {
+    if (-not $buildDirProvided) {
+        Move-LegacyReleaseTree (Get-LegacyReleaseVtkRoot $false) $BuildDir
+    }
+    if (-not $installDirProvided) {
+        Move-LegacyReleaseTree (Get-LegacyReleaseVtkRoot $true) $InstallDir
+    }
 }
 
 $vsDevCmd = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
@@ -93,7 +130,7 @@ $configureCommand = @(
     "-S", "`"$($SourceDir -replace '\\', '/')`"",
     "-B", "`"$($BuildDir -replace '\\', '/')`"",
     "-G", "Ninja",
-    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_BUILD_TYPE=$Configuration",
     "-DCMAKE_INSTALL_PREFIX=`"$($InstallDir -replace '\\', '/')`"",
     "-DQt6_DIR=`"$($qtCmakeDir -replace '\\', '/')`"",
     "-DVTK_BUILD_ALL_MODULES=OFF",
@@ -106,14 +143,14 @@ $configureCommand = @(
 $buildCommand = @(
     "`"$cmake`"",
     "--build", "`"$($BuildDir -replace '\\', '/')`"",
-    "--config", "Release",
+    "--config", $Configuration,
     "-j", "8"
 ) -join " "
 
 $installCommand = @(
     "`"$cmake`"",
     "--install", "`"$($BuildDir -replace '\\', '/')`"",
-    "--config", "Release"
+    "--config", $Configuration
 ) -join " "
 
 $command = "`"$vsDevCmd`" -arch=x64 -host_arch=x64 && $configureCommand && $buildCommand && $installCommand"
@@ -127,6 +164,7 @@ $vtkDir = Join-Path $InstallDir "lib\cmake\vtk-9.5"
 
 Write-Host ""
 Write-Host "VTK bootstrap complete."
+Write-Host "Configuration: $Configuration"
 Write-Host "Source: $SourceDir"
 Write-Host "Build: $BuildDir"
 Write-Host "Install: $InstallDir"

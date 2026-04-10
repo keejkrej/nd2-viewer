@@ -11,26 +11,28 @@
 - The Nikon SDK is not vendored in this repo; install it separately and override `ND2SDK_ROOT` if it is not in the default location.
 - On Windows, pass `-VtkDir` to the PowerShell scripts or set `VTK_DIR` in the environment when CMake cannot already resolve `VTKConfig.cmake`.
 - On macOS, the current default Qt path is `$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`.
-- On macOS, the current default VTK path is `$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`, with a fallback to `$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`.
+- On macOS, the helper scripts now resolve `VTK_DIR` from configuration-specific paths:
+  - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
+  - Release: `$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
 - When documenting or recreating the local toolchain, use a Qt-enabled VTK `9.5.2` build with `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`.
 - The VTK bootstrap scripts build only the module set `nd2-viewer` links against, plus required VTK dependencies. They do not try to build every available VTK module.
 - Windows VTK bootstrap example:
-  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with MSVC + Ninja, `Qt6_DIR=C:\Qt\6.11.0\msvc2022_64\lib\cmake\Qt6`, and `CMAKE_INSTALL_PREFIX=%USERPROFILE%\opt\vtk-9.5.2-qt611`
-  - after install, use `VTK_DIR=%USERPROFILE%\opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`
+  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with MSVC + Ninja, `Qt6_DIR=C:\Qt\6.11.0\msvc2022_64\lib\cmake\Qt6`, and `CMAKE_INSTALL_PREFIX=%USERPROFILE%\opt\vtk-9.5.2-qt611-release`
+  - after install, use `VTK_DIR=%USERPROFILE%\opt\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`
 - macOS VTK bootstrap example:
-  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`, `CMAKE_INSTALL_PREFIX=$HOME/opt/vtk-9.5.2-qt611`, `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`
-  - after install, use `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`
+  - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`, `CMAKE_INSTALL_PREFIX=$HOME/opt/vtk-9.5.2-qt611-release`, `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`
+  - after install, use `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
 - `libCZI` must exist at `third_party/libczi`; if it is missing, clone it with `git clone https://github.com/ZEISS/libczi.git third_party/libczi`.
 
 ## Preferred Build And Run Commands
 
-- Bootstrap VTK on Windows: `.\scripts\build-vtk-msvc.ps1`
-- Bootstrap VTK on macOS: `./scripts/build-vtk-macos.sh`
-- Day-to-day debug build: `.\scripts\build-msvc.ps1`
-- Run the built app: `.\build-msvc\bin\nd2-viewer.exe` (or your chosen `-BuildDir`)
+- Bootstrap VTK on Windows: `.\scripts\build-vtk-msvc.ps1 -Configuration Debug` or `.\scripts\build-vtk-msvc.ps1 -Configuration Release`
+- Bootstrap VTK on macOS: `./scripts/build-vtk-macos.sh --configuration Debug` or `./scripts/build-vtk-macos.sh --configuration Release`
+- Day-to-day debug build: `.\scripts\build-msvc.ps1 -Configuration Debug`
+- Run the built app: `.\build-msvc-debug\bin\nd2-viewer.exe` (or your chosen `-BuildDir`)
 - Release packaging entrypoint: `.\scripts\package-msvc.ps1`
 - Portable package instead of installer: `.\scripts\package-msvc.ps1 -Generator ZIP`
-- macOS debug build: `./scripts/build-macos.sh` (skips slow `macdeployqt` by default; `./scripts/package-macos.sh` deploys for the DMG)
+- macOS debug build: `./scripts/build-macos.sh --configuration Debug`
 - macOS packaging entrypoint: `./scripts/package-macos.sh`
 
 ## Important Toolchain Note
@@ -46,9 +48,9 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 ## Output Directories
 
-- Debug build tree: `build-msvc`
+- Debug build tree: `build-msvc-debug`
 - Release build tree: `build-msvc-release`
-- macOS debug build tree: `build-macos`
+- macOS debug build tree: `build-macos-debug`
 - macOS release build tree: `build-macos-release`
 - Built executable: `build-*\bin\nd2-viewer.exe`
 - Packaged artifacts: `dist`
@@ -58,8 +60,13 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
 - A successful recent package output should now use the `0.1.4` version string, for example `dist\nd2-viewer-0.1.4-win64.exe`.
+- On Windows, the default install prefix is now per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
+- `scripts/build-msvc.ps1` now runs `windeployqt` after a successful build so the build tree is directly runnable.
+- `scripts/build-macos.sh` now runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable.
 - CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
-- `scripts/package-macos.sh` builds a release `.app` bundle and writes a DMG into `dist`.
+- `scripts/package-msvc.ps1` is package-only now. Run `.\scripts\build-msvc.ps1 -Configuration Release` first.
+- `scripts/package-macos.sh` is package-only now. Run `./scripts/build-macos.sh --configuration Release` first.
+- `scripts/package-macos.sh` packages the already-deployed release `.app` bundle into `dist`.
 
 ## Repo Layout
 
@@ -114,6 +121,6 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 ## Editing Guidance
 
-- Do not edit `build-msvc`, `build-msvc-release`, or `dist` unless the task is specifically about generated outputs.
+- Do not edit `build-msvc-debug`, `build-msvc-release`, `build-macos-debug`, `build-macos-release`, or `dist` unless the task is specifically about generated outputs.
 - Prefer changing source under `src` and using the scripts to validate.
 - Keep changes compatible with the Windows/MSVC Qt flow, the macOS Qt/VTK defaults, and the required VTK integration already encoded in `CMakeLists.txt` and the helper scripts.

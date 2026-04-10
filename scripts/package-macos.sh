@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Like scripts/package-msvc.ps1: configure + build, bundle Qt into the .app, then CPack (DMG).
 
 set -euo pipefail
 
@@ -7,30 +6,16 @@ configuration="Release"
 build_dir="build-macos-release"
 output_dir="dist"
 generator="DragNDrop"
-qt6_dir="${Qt6_DIR:-$HOME/Qt/6.11.0/macos/lib/cmake/Qt6}"
-vtk_install_dir_default="$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5"
-vtk_build_dir_default="$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5"
-if [[ -n "${VTK_DIR:-}" ]]; then
-  vtk_dir="${VTK_DIR}"
-elif [[ -f "${vtk_install_dir_default}/vtk-config.cmake" || -f "${vtk_install_dir_default}/VTKConfig.cmake" ]]; then
-  vtk_dir="${vtk_install_dir_default}"
-else
-  vtk_dir="${vtk_build_dir_default}"
-fi
-nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/package-macos.sh [options]
 
 Options:
-  --configuration <type>  CMake build type. Default: Release
+  --configuration <type>  CMake build type. Supported: Release. Default: Release
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos-release
   --output-dir <path>     Package output directory relative to the repo root. Default: dist
   --generator <name>      CPack generator. Supported: DragNDrop. Default: DragNDrop
-  --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
-  --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5, fallback ~/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5
-  --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
 }
@@ -53,18 +38,6 @@ while [[ $# -gt 0 ]]; do
       generator="$2"
       shift 2
       ;;
-    --qt6-dir)
-      qt6_dir="$2"
-      shift 2
-      ;;
-    --vtk-dir)
-      vtk_dir="$2"
-      shift 2
-      ;;
-    --nd2sdk-root)
-      nd2sdk_root="$2"
-      shift 2
-      ;;
     -h|--help)
       usage
       exit 0
@@ -76,6 +49,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${configuration}" in
+  Release)
+    ;;
+  *)
+    echo "Unsupported configuration '${configuration}'. Use Release." >&2
+    exit 1
+    ;;
+esac
 
 case "${generator}" in
   DragNDrop)
@@ -92,37 +74,23 @@ output_path="${repo_root}/${output_dir}"
 cpack_config="${build_path}/CPackConfig.cmake"
 app_bundle="${build_path}/bin/nd2-viewer.app"
 
-build_args=(
-  --configuration "${configuration}"
-  --qt6-dir "${qt6_dir}"
-  --nd2sdk-root "${nd2sdk_root}"
-)
-
-if [[ -n "${vtk_dir}" ]]; then
-  build_args+=(--vtk-dir "${vtk_dir}")
-fi
-
-export CMAKE_BUILD_TYPE="${configuration}"
-export BUILD_DIR="${build_dir}"
-export Qt6_DIR="${qt6_dir}"
-export VTK_DIR="${vtk_dir}"
-export ND2SDK_ROOT="${nd2sdk_root}"
-
-"${repo_root}/scripts/build-macos.sh" "${build_args[@]}"
-
-if [[ ! -d "${app_bundle}" ]]; then
-  echo "App bundle not found at '${app_bundle}'." >&2
+if [[ ! -d "${build_path}" ]]; then
+  echo "Release build directory not found at '${build_path}'." >&2
+  echo "Run ./scripts/build-macos.sh --configuration Release first." >&2
   exit 1
 fi
 
-# Bundle Qt into the .app and ad-hoc sign (required for a portable DMG).
-bash "${repo_root}/scripts/macos-macdeployqt.sh" "${app_bundle}" "${qt6_dir}"
+if [[ ! -d "${app_bundle}" ]]; then
+  echo "Release app bundle not found at '${app_bundle}'." >&2
+  echo "Run ./scripts/build-macos.sh --configuration Release first." >&2
+  exit 1
+fi
 
 if [[ ! -f "${cpack_config}" ]]; then
   echo "CPackConfig.cmake not found at '${cpack_config}'." >&2
+  echo "Run ./scripts/build-macos.sh --configuration Release first so CMake generates packaging metadata." >&2
   exit 1
 fi
 
 mkdir -p "${output_path}"
-
 cpack --config "${cpack_config}" -G "${generator}" -B "${output_path}"

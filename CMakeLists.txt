@@ -8,6 +8,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(WIN32)
+  file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/Programs/${PROJECT_NAME}" _nd2viewer_user_install_prefix)
+  if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT
+      OR CMAKE_INSTALL_PREFIX STREQUAL "C:/Program Files/${PROJECT_NAME}"
+      OR CMAKE_INSTALL_PREFIX STREQUAL "C:/Program Files (x86)/${PROJECT_NAME}")
+    set(CMAKE_INSTALL_PREFIX "${_nd2viewer_user_install_prefix}" CACHE PATH
+      "Install path prefix, prepended onto install directories." FORCE
+    )
+  endif()
+endif()
+
 if(WIN32 AND NOT MSVC)
   message(FATAL_ERROR "On Windows, nd2-viewer now supports only the MSVC Qt toolchain. Use Qt 6 msvc2022_64.")
 endif()
@@ -24,8 +35,13 @@ option(ND2VIEWER_USE_SHARED_SDK "Link against the Nikon shared SDK." ON)
 if(APPLE)
   set(_nd2sdk_root_default "$ENV{HOME}/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8")
   set(_qt6_dir_default "$ENV{HOME}/Qt/6.11.0/macos/lib/cmake/Qt6")
-  set(_vtk_dir_install_default "$ENV{HOME}/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5")
-  set(_vtk_dir_build_default "$ENV{HOME}/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_vtk_dir_install_default "$ENV{HOME}/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
+    set(_vtk_dir_build_default "$ENV{HOME}/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
+  else()
+    set(_vtk_dir_install_default "$ENV{HOME}/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
+    set(_vtk_dir_build_default "$ENV{HOME}/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
+  endif()
   if(EXISTS "${_vtk_dir_install_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_install_default}/VTKConfig.cmake")
     set(_vtk_dir_default "${_vtk_dir_install_default}")
   elseif(EXISTS "${_vtk_dir_build_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_build_default}/VTKConfig.cmake")
@@ -36,8 +52,13 @@ if(APPLE)
 elseif(WIN32)
   set(_nd2sdk_root_default "C:/Program Files/nd2readsdk-shared")
   set(_qt6_dir_default "")
-  set(_vtk_dir_install_default "$ENV{USERPROFILE}/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5")
-  set(_vtk_dir_build_default "$ENV{USERPROFILE}/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_vtk_dir_install_default "$ENV{USERPROFILE}/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
+    set(_vtk_dir_build_default "$ENV{USERPROFILE}/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
+  else()
+    set(_vtk_dir_install_default "$ENV{USERPROFILE}/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
+    set(_vtk_dir_build_default "$ENV{USERPROFILE}/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
+  endif()
   if(EXISTS "${_vtk_dir_install_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_install_default}/VTKConfig.cmake")
     set(_vtk_dir_default "${_vtk_dir_install_default}")
   elseif(EXISTS "${_vtk_dir_build_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_build_default}/VTKConfig.cmake")
@@ -73,6 +94,20 @@ find_package(VTK CONFIG REQUIRED COMPONENTS
   RenderingVolume
   RenderingVolumeOpenGL2
 )
+if((WIN32 OR APPLE) AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if(NOT VTK_DIR OR NOT EXISTS "${VTK_DIR}/VTK-targets-debug.cmake")
+    if(WIN32)
+      set(_nd2viewer_debug_vtk_hint ".\\scripts\\build-vtk-msvc.ps1 -Configuration Debug")
+    else()
+      set(_nd2viewer_debug_vtk_hint "./scripts/build-vtk-macos.sh --configuration Debug")
+    endif()
+    message(FATAL_ERROR
+      "Debug builds require a VTK package with debug targets. Resolved VTK_DIR='${VTK_DIR}', "
+      "but '${VTK_DIR}/VTK-targets-debug.cmake' was not found. "
+      "Build debug VTK first with ${_nd2viewer_debug_vtk_hint}, or override VTK_DIR to a debug-capable package."
+    )
+  endif()
+endif()
 set(ND2VIEWER_VTK_LIBS
   VTK::CommonCore
   VTK::CommonDataModel

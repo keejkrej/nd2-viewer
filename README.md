@@ -28,8 +28,8 @@ The project supports:
 
 Recommended VTK bootstrap commands:
 
-- Windows: `.\scripts\build-vtk-msvc.ps1`
-- macOS Apple Silicon: `./scripts/build-vtk-macos.sh`
+- Windows: `.\scripts\build-vtk-msvc.ps1 -Configuration Debug` or `.\scripts\build-vtk-msvc.ps1 -Configuration Release`
+- macOS Apple Silicon: `./scripts/build-vtk-macos.sh --configuration Debug` or `./scripts/build-vtk-macos.sh --configuration Release`
 
 ### Dependency setup
 
@@ -52,9 +52,13 @@ Expected SDK locations on the main supported platforms:
 
 Current Qt and VTK defaults:
 
-- Windows: the helper scripts default to `QtRoot=C:\Qt\6.11.0\msvc2022_64` and auto-detect `VTK_DIR` at `%USERPROFILE%\opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`, then `%USERPROFILE%\build\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`.
+- Windows: the helper scripts default to `QtRoot=C:\Qt\6.11.0\msvc2022_64` and resolve `VTK_DIR` by configuration:
+  - Debug: `%USERPROFILE%\opt\vtk-9.5.2-qt611-debug\lib\cmake\vtk-9.5`, fallback `%USERPROFILE%\build\vtk-9.5.2-qt611-debug\lib\cmake\vtk-9.5`
+  - Release: `%USERPROFILE%\opt\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`, fallback `%USERPROFILE%\build\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`
 - macOS Apple Silicon: `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`
-- macOS Apple Silicon: build or install VTK first. `VTK_DIR` defaults to `$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5` if that install exists, otherwise CMake falls back to `$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`
+- macOS Apple Silicon: build or install VTK first. `VTK_DIR` defaults by configuration:
+  - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
+  - Release: `$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
 
 The build uses the vendored `libCZI` checkout at `third_party/libczi`, so if that directory is missing or empty the configure step will fail until it is cloned there.
 
@@ -65,11 +69,13 @@ The app expects a Qt-enabled VTK 9.5 build. Build VTK against the same Qt 6.11 i
 The intended path is to use the bootstrap scripts:
 
 ```powershell
-.\scripts\build-vtk-msvc.ps1
+.\scripts\build-vtk-msvc.ps1 -Configuration Debug
+.\scripts\build-vtk-msvc.ps1 -Configuration Release
 ```
 
 ```bash
-./scripts/build-vtk-macos.sh
+./scripts/build-vtk-macos.sh --configuration Debug
+./scripts/build-vtk-macos.sh --configuration Release
 ```
 
 Those scripts do not build every VTK target. They request only the VTK modules `nd2-viewer` links against, plus the dependency closure VTK needs to satisfy them.
@@ -78,8 +84,8 @@ Windows MSVC example:
 
 ```powershell
 $source = Join-Path $HOME "src\VTK"
-$build = Join-Path $HOME "build\vtk-9.5.2-qt611"
-$install = Join-Path $HOME "opt\vtk-9.5.2-qt611"
+$build = Join-Path $HOME "build\vtk-9.5.2-qt611-release"
+$install = Join-Path $HOME "opt\vtk-9.5.2-qt611-release"
 
 git clone https://github.com/Kitware/VTK.git $source
 cd $source
@@ -95,8 +101,8 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S $source -B $build 
 After that, point `nd2-viewer` at:
 
 ```powershell
-$env:VTK_DIR = Join-Path $HOME "opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5"
-.\scripts\build-msvc.ps1
+$env:VTK_DIR = Join-Path $HOME "opt\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5"
+.\scripts\build-msvc.ps1 -Configuration Release
 ```
 
 macOS Apple Silicon example:
@@ -106,10 +112,10 @@ git clone https://github.com/Kitware/VTK.git "$HOME/src/VTK"
 cd "$HOME/src/VTK"
 git checkout v9.5.2
 
-cmake -S "$HOME/src/VTK" -B "$HOME/build/vtk-9.5.2-qt611" \
+cmake -S "$HOME/src/VTK" -B "$HOME/build/vtk-9.5.2-qt611-release" \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$HOME/opt/vtk-9.5.2-qt611" \
+  -DCMAKE_INSTALL_PREFIX="$HOME/opt/vtk-9.5.2-qt611-release" \
   -DQt6_DIR="$HOME/Qt/6.11.0/macos/lib/cmake/Qt6" \
   -DVTK_BUILD_ALL_MODULES=OFF \
   -DVTK_BUILD_EXAMPLES=OFF \
@@ -124,32 +130,32 @@ cmake -S "$HOME/src/VTK" -B "$HOME/build/vtk-9.5.2-qt611" \
   -DVTK_MODULE_ENABLE_VTK_RenderingVolume=YES \
   -DVTK_MODULE_ENABLE_VTK_RenderingVolumeOpenGL2=YES
 
-cmake --build "$HOME/build/vtk-9.5.2-qt611" --parallel
-cmake --install "$HOME/build/vtk-9.5.2-qt611"
+cmake --build "$HOME/build/vtk-9.5.2-qt611-release" --parallel
+cmake --install "$HOME/build/vtk-9.5.2-qt611-release"
 ```
 
 After that, `./scripts/build-macos.sh` should pick up:
 
 ```bash
-export VTK_DIR="$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5"
-./scripts/build-macos.sh
+export VTK_DIR="$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5"
+./scripts/build-macos.sh --configuration Release
 ```
 
 The easiest path is:
 
 ```powershell
-.\scripts\build-msvc.ps1
-.\build-msvc\bin\nd2-viewer.exe
+.\scripts\build-msvc.ps1 -Configuration Debug
+.\build-msvc-debug\bin\nd2-viewer.exe
 ```
 
-The build script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc`.
+The build script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc-debug` or `build-msvc-release`.
 
-Build or install VTK first. The Windows helper script now auto-detects `%USERPROFILE%\opt\vtk-9.5.2-qt611\lib\cmake\vtk-9.5` and `%USERPROFILE%\build\vtk-9.5.2-qt611\lib\cmake\vtk-9.5`, or you can still set `VTK_DIR` or pass `-VtkDir`.
+Build or install VTK first. The Windows helper script requires `-Configuration Debug` or `-Configuration Release` and auto-detects the matching config-specific VTK path, or you can still set `VTK_DIR` or pass `-VtkDir`.
 
 On macOS, the easiest path is:
 
 ```bash
-./scripts/build-macos.sh
+./scripts/build-macos.sh --configuration Debug
 ```
 
 The macOS build script also supports explicit options:
@@ -161,11 +167,11 @@ The macOS build script also supports explicit options:
 That script defaults to:
 
 - `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`
-- `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611/lib/cmake/vtk-9.5`
+- `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`
 - `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
-- `build_dir=build-macos`
-- `configuration=Debug`
-- **No** `macdeployqt` during normal builds (it can take many minutes); `./scripts/package-macos.sh` runs it when producing a DMG, or run `scripts/macos-macdeployqt.sh` manually on the `.app` if you need a self-contained bundle.
+- `build_dir=build-macos-debug` or `build-macos-release`
+- no implicit configuration; `--configuration` is required
+- the build script runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable
 
 If your SDK, Qt, or VTK lives elsewhere, override `ND2SDK_ROOT`, `Qt6_DIR`, or `VTK_DIR` when invoking the script.
 
@@ -175,21 +181,23 @@ To produce a macOS archive package, run:
 ./scripts/package-macos.sh
 ```
 
-That script builds a release tree in `build-macos-release`, deploys a real `nd2-viewer.app` bundle, and writes a DMG into `dist` by default.
+That script assumes a completed release build in `build-macos-release` and writes a DMG into `dist` from the already-deployed `.app` bundle.
 
 ### Build a Windows installer
 
 To produce a Windows installer, build a release tree and package it with CPack:
 
 ```powershell
+.\scripts\build-msvc.ps1 -Configuration Release
 .\scripts\package-msvc.ps1
 ```
 
-That script builds into `build-msvc-release` by default and writes the package into `dist`.
+That script assumes a completed release build in `build-msvc-release` and writes the package into `dist`.
 
 Installer notes:
 
 - The default generator is `NSIS`, which produces a standard `.exe` installer.
+- On Windows, the default install location is per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
 - `makensis.exe` must be on `PATH` for the NSIS package to be created.
 - If you want a portable archive instead, run `.\scripts\package-msvc.ps1 -Generator ZIP`.
 
@@ -200,7 +208,7 @@ If you want to run the steps yourself:
 ```powershell
 $vs = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
 $cmake = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
-cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_DIR=C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6 -DND2SDK_ROOT=C:/Program Files/nd2readsdk-shared && `"$cmake`" --build build-msvc --config Debug -j 8"
+cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_DIR=C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6 -DVTK_DIR=$env:USERPROFILE/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5 -DND2SDK_ROOT=C:/Program Files/nd2readsdk-shared && `"$cmake`" --build build-msvc-debug --config Debug -j 8"
 ```
 
 If CMake does not already know where VTK is installed on Windows, build/install VTK first and add `-DVTK_DIR=<path-to-VTKConfig.cmake-directory>` to the configure command above.
@@ -208,7 +216,7 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 ## Notes
 
 - `CMakeLists.txt` copies the ND2 SDK runtime DLLs and the vendored `libCZI` runtime after build.
-- On Windows, `scripts/package-msvc.ps1` runs `scripts/msvc-windeployqt.ps1` before CPack so the packaged app includes Qt DLLs (day-to-day builds skip this step).
+- On Windows, `scripts/build-msvc.ps1` runs `scripts/msvc-windeployqt.ps1` after a successful build so the build tree is directly runnable and packaging reuses that deployed tree.
 - The 3D viewer now uses the VTK/QVTK integration on both Windows and macOS, and the VTK backend is the only supported 3D path.
 - CPack installs the built runtime payload from `build-*/bin`, so package from a release build rather than a debug build.
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.

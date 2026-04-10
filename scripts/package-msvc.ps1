@@ -1,13 +1,10 @@
 param(
-    [ValidateSet("Release", "RelWithDebInfo", "MinSizeRel")]
+    [ValidateSet("Release")]
     [string]$Configuration = "Release",
     [string]$BuildDir = "build-msvc-release",
     [string]$OutputDir = "dist",
     [ValidateSet("NSIS", "ZIP")]
-    [string]$Generator = "NSIS",
-    [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
-    [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
-    [string]$VtkDir = ""
+    [string]$Generator = "NSIS"
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +13,20 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildPath = Join-Path $repoRoot $BuildDir
 $outputPath = Join-Path $repoRoot $OutputDir
 $cpackConfig = Join-Path $buildPath "CPackConfig.cmake"
+$exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
 $makensisPath = $null
+
+if (!(Test-Path $buildPath)) {
+    throw "Release build directory '$buildPath' was not found. Run .\scripts\build-msvc.ps1 -Configuration Release first."
+}
+
+if (!(Test-Path $exePath)) {
+    throw "Release executable '$exePath' was not found. Run .\scripts\build-msvc.ps1 -Configuration Release first."
+}
+
+if (!(Test-Path $cpackConfig)) {
+    throw "CPackConfig.cmake not found at '$cpackConfig'. Run .\scripts\build-msvc.ps1 -Configuration Release first so CMake generates packaging metadata."
+}
 
 if ($Generator -eq "NSIS") {
     $nsisCommand = Get-Command "makensis.exe" -ErrorAction SilentlyContinue
@@ -37,20 +47,6 @@ if ($Generator -eq "NSIS") {
             throw "NSIS was not found on PATH or in the standard install locations. Install NSIS and re-run this script, or use -Generator ZIP for a portable archive."
         }
     }
-}
-
-& (Join-Path $PSScriptRoot "build-msvc.ps1") `
-    -Configuration $Configuration `
-    -BuildDir $BuildDir `
-    -QtRoot $QtRoot `
-    -Nd2SdkRoot $Nd2SdkRoot `
-    -VtkDir $VtkDir
-
-$exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
-& (Join-Path $PSScriptRoot "msvc-windeployqt.ps1") -QtRoot $QtRoot -ExePath $exePath
-
-if (!(Test-Path $cpackConfig)) {
-    throw "CPackConfig.cmake not found at '$cpackConfig'. The configure step did not produce packaging metadata."
 }
 
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null

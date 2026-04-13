@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(nd2-viewer VERSION 0.1.5 LANGUAGES CXX)
+project(nd2-viewer VERSION 0.1.6 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 

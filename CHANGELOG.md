@@ -2,6 +2,11 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.6] - 2026-04-13
+
+### Changed
+- Bumped the project version to `0.1.6`.
+
 ## [0.1.5] - 2026-04-10
 
 ### Changed

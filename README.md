@@ -226,7 +226,7 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.
-- The first CZI milestone supports standard plane-based files and rejects tiled, mosaic, pyramid, or otherwise irregular CZI layouts with a clear open-time error.
+- The CZI reader now loads layer-0 image data from standard, tiled, mosaic, and pyramid CZI files, but it still ignores higher pyramid levels and does not do ROI-aware virtualized loading.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - The integrated `3D` mode is enabled only for files with a usable z-loop and reuses the current shared viewer state.

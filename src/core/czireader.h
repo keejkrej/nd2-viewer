@@ -41,22 +41,34 @@ private:
         int size = 0;
     };
 
+    struct SequencePlane
+    {
+        QVector<int> coordinates;
+        libCZI::IntRect frameRect = {0, 0, 0, 0};
+        QVector<QVector<int>> channelSubblockIndices;
+    };
+
     static DocumentInfo buildFallbackInfo(const QString &path);
     static QString coordinateKey(const QVector<int> &coords);
     static QString loopType(libCZI::DimensionIndex dimension);
     static QString loopLabel(libCZI::DimensionIndex dimension);
     static MetadataSection jsonMetadataSection(const QString &title, const QJsonValue &treeValue, const QString &rawText);
     static QColor defaultColorForIndex(int index);
+    static bool isLayer0SubBlock(const libCZI::SubBlockInfo &subBlockInfo);
     static bool isSupportedPixelType(libCZI::PixelType pixelType);
     static int bitsPerComponentFor(libCZI::PixelType pixelType);
     static QString pixelDataTypeFor(libCZI::PixelType pixelType);
 
     bool loadDocumentInfo(QString *errorMessage);
-    bool hasUnsupportedPyramidData(QString *errorMessage) const;
     bool validateSubBlockInfo(const libCZI::SubBlockInfo &subBlockInfo, QString *errorMessage) const;
     bool buildSequenceMap(QString *errorMessage);
     QJsonObject buildSummaryMetadata(const QString &metadataXml) const;
-    QVector<int> subblockIndicesForSequence(int sequenceIndex, QString *errorMessage = nullptr) const;
+    const SequencePlane *sequencePlaneForIndex(int sequenceIndex, QString *errorMessage = nullptr) const;
+    bool planeCoordinateForChannel(const SequencePlane &sequencePlane,
+                                   int channelSlot,
+                                   libCZI::CDimCoordinate *coordinate,
+                                   libCZI::PixelType *pixelType,
+                                   QString *errorMessage = nullptr) const;
 
     mutable QMutex mutex_;
     std::shared_ptr<libCZI::IStream> stream_;
@@ -64,7 +76,6 @@ private:
     DocumentInfo info_;
     QVector<LoopBinding> loopBindings_;
     QVector<int> channelValues_;
-    QVector<QVector<int>> sequenceCoordinates_;
-    QVector<QVector<int>> sequenceSubblockIndices_;
+    QVector<SequencePlane> sequencePlanes_;
     QHash<QString, int> coordsToSequence_;
 };

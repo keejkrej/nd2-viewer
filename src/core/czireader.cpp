@@ -57,7 +57,29 @@ QJsonObject subBlockInfoToJson(const libCZI::SubBlockInfo &subBlockInfo)
 
 QString unsupportedMessage(const QString &reason)
 {
-    return QStringLiteral("This CZI file is not supported by the first-pass CZI reader: %1").arg(reason);
+    return QStringLiteral("This CZI file is not supported by the CZI reader: %1").arg(reason);
+}
+
+bool rectsEqual(const libCZI::IntRect &lhs, const libCZI::IntRect &rhs)
+{
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+}
+
+libCZI::IntRect unitedRect(const libCZI::IntRect &lhs, const libCZI::IntRect &rhs)
+{
+    if (!lhs.IsNonEmpty()) {
+        return rhs;
+    }
+
+    if (!rhs.IsNonEmpty()) {
+        return lhs;
+    }
+
+    const int left = std::min(lhs.x, rhs.x);
+    const int top = std::min(lhs.y, rhs.y);
+    const int right = std::max(lhs.x + lhs.w, rhs.x + rhs.w);
+    const int bottom = std::max(lhs.y + lhs.h, rhs.y + rhs.h);
+    return {left, top, right - left, bottom - top};
 }
 } // namespace
 
@@ -126,8 +148,7 @@ void CziReader::close()
     info_ = buildFallbackInfo(QString());
     loopBindings_.clear();
     channelValues_.clear();
-    sequenceCoordinates_.clear();
-    sequenceSubblockIndices_.clear();
+    sequencePlanes_.clear();
     coordsToSequence_.clear();
 }
 
@@ -283,6 +304,12 @@ QColor CziReader::defaultColorForIndex(int index)
     return colors.at(static_cast<size_t>(index) % colors.size());
 }
 
+bool CziReader::isLayer0SubBlock(const libCZI::SubBlockInfo &subBlockInfo)
+{
+    return subBlockInfo.logicalRect.w == static_cast<int>(subBlockInfo.physicalSize.w)
+        && subBlockInfo.logicalRect.h == static_cast<int>(subBlockInfo.physicalSize.h);
+}
+
 bool CziReader::isSupportedPixelType(libCZI::PixelType pixelType)
 {
     return pixelType == libCZI::PixelType::Gray8
@@ -333,23 +360,63 @@ bool CziReader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex
     return true;
 }
 
-QVector<int> CziReader::subblockIndicesForSequence(int sequenceIndex, QString *errorMessage) const
+const CziReader::SequencePlane *CziReader::sequencePlaneForIndex(int sequenceIndex, QString *errorMessage) const
 {
     if (!reader_) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("No CZI document is open.");
         }
-        return {};
+        return nullptr;
     }
 
-    if (sequenceIndex < 0 || sequenceIndex >= sequenceSubblockIndices_.size()) {
+    if (sequenceIndex < 0 || sequenceIndex >= sequencePlanes_.size()) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("The requested CZI frame index is out of range.");
         }
-        return {};
+        return nullptr;
     }
 
-    return sequenceSubblockIndices_.at(sequenceIndex);
+    return &sequencePlanes_.at(sequenceIndex);
+}
+
+bool CziReader::planeCoordinateForChannel(const SequencePlane &sequencePlane,
+                                          int channelSlot,
+                                          libCZI::CDimCoordinate *coordinate,
+                                          libCZI::PixelType *pixelType,
+                                          QString *errorMessage) const
+{
+    if (channelSlot < 0 || channelSlot >= sequencePlane.channelSubblockIndices.size()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("The requested CZI channel index is out of range.");
+        }
+        return false;
+    }
+
+    const QVector<int> &subblockIndices = sequencePlane.channelSubblockIndices.at(channelSlot);
+    if (subblockIndices.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("The requested CZI plane does not contain any layer-0 image data.");
+        }
+        return false;
+    }
+
+    libCZI::SubBlockInfo subBlockInfo = {};
+    if (!reader_->TryGetSubBlockInfo(subblockIndices.constFirst(), &subBlockInfo)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("libCZI could not query CZI sub-block %1.").arg(subblockIndices.constFirst());
+        }
+        return false;
+    }
+
+    if (coordinate) {
+        *coordinate = subBlockInfo.coordinate;
+    }
+
+    if (pixelType) {
+        *pixelType = subBlockInfo.pixelType;
+    }
+
+    return true;
 }
 
 RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
@@ -357,35 +424,70 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
     QMutexLocker locker(&mutex_);
     RawFrame frame;
 
-    const QVector<int> subblockIndices = subblockIndicesForSequence(sequenceIndex, errorMessage);
-    if (subblockIndices.isEmpty()) {
+    const SequencePlane *sequencePlane = sequencePlaneForIndex(sequenceIndex, errorMessage);
+    if (!sequencePlane) {
         return frame;
     }
 
+    const bool requiresTileComposition = std::any_of(sequencePlane->channelSubblockIndices.cbegin(),
+                                                     sequencePlane->channelSubblockIndices.cend(),
+                                                     [](const QVector<int> &indices) { return indices.size() != 1; });
+
     frame.sequenceIndex = sequenceIndex;
-    frame.width = info_.frameSize.width();
-    frame.height = info_.frameSize.height();
+    frame.width = sequencePlane->frameRect.w;
+    frame.height = sequencePlane->frameRect.h;
     frame.bitsPerComponent = info_.bitsPerComponentSignificant > 0 ? info_.bitsPerComponentSignificant : info_.bitsPerComponentInMemory;
-    frame.components = subblockIndices.size();
+    frame.components = static_cast<int>(sequencePlane->channelSubblockIndices.size());
     frame.pixelDataType = info_.pixelDataType;
     frame.bytesPerLine = static_cast<qsizetype>(frame.width) * frame.components * frame.bytesPerComponent();
     frame.data.resize(frame.bytesPerLine * frame.height);
 
-    for (int channelSlot = 0; channelSlot < subblockIndices.size(); ++channelSlot) {
+    std::shared_ptr<libCZI::ISingleChannelTileAccessor> tileAccessor;
+    if (requiresTileComposition) {
+        tileAccessor = reader_->CreateSingleChannelTileAccessor();
+        if (!tileAccessor) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("libCZI could not create a tile accessor for this CZI plane.");
+            }
+            return {};
+        }
+    }
+
+    for (int channelSlot = 0; channelSlot < sequencePlane->channelSubblockIndices.size(); ++channelSlot) {
         std::shared_ptr<libCZI::IBitmapData> bitmap;
         try {
-            const std::shared_ptr<libCZI::ISubBlock> subBlock = reader_->ReadSubBlock(subblockIndices.at(channelSlot));
-            if (!subBlock) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("libCZI could not read CZI sub-block %1.").arg(subblockIndices.at(channelSlot));
+            if (requiresTileComposition) {
+                libCZI::CDimCoordinate planeCoordinate;
+                libCZI::PixelType pixelType = libCZI::PixelType::Invalid;
+                if (!planeCoordinateForChannel(*sequencePlane, channelSlot, &planeCoordinate, &pixelType, errorMessage)) {
+                    return {};
                 }
-                return {};
+
+                libCZI::ISingleChannelTileAccessor::Options options;
+                options.Clear();
+                options.backGroundColor = {0.0f, 0.0f, 0.0f};
+                options.sortByM = true;
+                options.useVisibilityCheckOptimization = true;
+                bitmap = tileAccessor->Get(pixelType, sequencePlane->frameRect, &planeCoordinate, &options);
+            } else {
+                const QVector<int> &subblockIndices = sequencePlane->channelSubblockIndices.at(channelSlot);
+                const std::shared_ptr<libCZI::ISubBlock> subBlock = reader_->ReadSubBlock(subblockIndices.constFirst());
+                if (!subBlock) {
+                    if (errorMessage) {
+                        *errorMessage = QStringLiteral("libCZI could not read CZI sub-block %1.").arg(subblockIndices.constFirst());
+                    }
+                    return {};
+                }
+
+                bitmap = libCZI::CreateBitmapFromSubBlock(subBlock.get());
             }
 
-            bitmap = libCZI::CreateBitmapFromSubBlock(subBlock.get());
             if (!bitmap) {
                 if (errorMessage) {
-                    *errorMessage = QStringLiteral("libCZI could not decode CZI sub-block %1.").arg(subblockIndices.at(channelSlot));
+                    *errorMessage = requiresTileComposition
+                                        ? QStringLiteral("libCZI could not compose the requested CZI plane.")
+                                        : QStringLiteral("libCZI could not decode CZI sub-block %1.")
+                                              .arg(sequencePlane->channelSubblockIndices.at(channelSlot).constFirst());
                 }
                 return {};
             }
@@ -393,13 +495,22 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
             const libCZI::IntSize bitmapSize = bitmap->GetSize();
             if (static_cast<int>(bitmapSize.w) != frame.width || static_cast<int>(bitmapSize.h) != frame.height) {
                 if (errorMessage) {
-                    *errorMessage = unsupportedMessage(QStringLiteral("decoded channel planes do not share the same size"));
+                    *errorMessage = unsupportedMessage(QStringLiteral("decoded layer-0 channel planes do not share the same size"));
                 }
                 return {};
             }
 
-            const libCZI::BitmapLockInfo lockInfo = bitmap->Lock();
+            if (!isSupportedPixelType(bitmap->GetPixelType())
+                || bitsPerComponentFor(bitmap->GetPixelType()) != frame.bitsPerComponent
+                || pixelDataTypeFor(bitmap->GetPixelType()) != frame.pixelDataType) {
+                if (errorMessage) {
+                    *errorMessage = unsupportedMessage(QStringLiteral("decoded CZI planes changed pixel type during composition"));
+                }
+                return {};
+            }
+
             const int bytesPerComponent = frame.bytesPerComponent();
+            libCZI::ScopedBitmapLockerSP lockInfo{bitmap};
             for (int y = 0; y < frame.height; ++y) {
                 const char *sourceRow = static_cast<const char *>(lockInfo.ptrDataRoi) + static_cast<qsizetype>(y) * lockInfo.stride;
                 char *destinationRow = frame.data.data() + static_cast<qsizetype>(y) * frame.bytesPerLine;
@@ -409,12 +520,7 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
                     std::memcpy(destinationPixel, sourcePixel, static_cast<size_t>(bytesPerComponent));
                 }
             }
-            bitmap->Unlock();
         } catch (const std::exception &exception) {
-            if (bitmap && bitmap->GetLockCount() > 0) {
-                bitmap->Unlock();
-            }
-
             if (errorMessage) {
                 *errorMessage = QStringLiteral("libCZI failed to decode frame %1: %2")
                                     .arg(sequenceIndex + 1)
@@ -430,37 +536,62 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
 MetadataSection CziReader::frameMetadataSection(int sequenceIndex, QString *errorMessage) const
 {
     QMutexLocker locker(&mutex_);
-    const QVector<int> subblockIndices = subblockIndicesForSequence(sequenceIndex, errorMessage);
-    if (subblockIndices.isEmpty()) {
+    const SequencePlane *sequencePlane = sequencePlaneForIndex(sequenceIndex, errorMessage);
+    if (!sequencePlane) {
         return {};
     }
 
     QJsonArray channelArray;
     QStringList rawSections;
-    for (int channelSlot = 0; channelSlot < subblockIndices.size(); ++channelSlot) {
+    constexpr int kMetadataSampleLimit = 8;
+    for (int channelSlot = 0; channelSlot < sequencePlane->channelSubblockIndices.size(); ++channelSlot) {
         try {
-            const std::shared_ptr<libCZI::ISubBlock> subBlock = reader_->ReadSubBlock(subblockIndices.at(channelSlot));
-            if (!subBlock) {
+            const QVector<int> &subblockIndices = sequencePlane->channelSubblockIndices.at(channelSlot);
+            if (subblockIndices.isEmpty()) {
                 continue;
             }
 
-            const libCZI::SubBlockInfo &subBlockInfo = subBlock->GetSubBlockInfo();
-            const std::shared_ptr<libCZI::ISubBlockMetadata> metadata = libCZI::CreateSubBlockMetadataFromSubBlock(subBlock.get());
-            const QString xml = metadata ? QString::fromUtf8(metadata->GetXml().c_str()) : QString();
-
-            QJsonObject item = subBlockInfoToJson(subBlockInfo);
+            QJsonObject item;
             item.insert(QStringLiteral("channelIndex"), channelSlot);
             item.insert(QStringLiteral("channelName"),
                         channelSlot < info_.channels.size() ? info_.channels.at(channelSlot).name : QStringLiteral("Channel %1").arg(channelSlot + 1));
-            item.insert(QStringLiteral("subBlockIndex"), subblockIndices.at(channelSlot));
-            item.insert(QStringLiteral("hasMetadataXml"), !xml.trimmed().isEmpty());
+            item.insert(QStringLiteral("tileCount"), subblockIndices.size());
+            item.insert(QStringLiteral("frameRect"), rectToJson(sequencePlane->frameRect));
+
+            QJsonArray sampledSubblocks;
+            QStringList sampledXml;
+            const int sampleCount = std::min(static_cast<int>(subblockIndices.size()), kMetadataSampleLimit);
+            for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+                const int subblockIndex = subblockIndices.at(sampleIndex);
+                const std::shared_ptr<libCZI::ISubBlock> subBlock = reader_->ReadSubBlock(subblockIndex);
+                if (!subBlock) {
+                    continue;
+                }
+
+                const libCZI::SubBlockInfo &subBlockInfo = subBlock->GetSubBlockInfo();
+                QJsonObject subblockObject = subBlockInfoToJson(subBlockInfo);
+                subblockObject.insert(QStringLiteral("subBlockIndex"), subblockIndex);
+                sampledSubblocks.push_back(subblockObject);
+
+                const std::shared_ptr<libCZI::ISubBlockMetadata> metadata = libCZI::CreateSubBlockMetadataFromSubBlock(subBlock.get());
+                const QString xml = metadata ? QString::fromUtf8(metadata->GetXml().c_str()) : QString();
+                if (!xml.trimmed().isEmpty()) {
+                    sampledXml << QStringLiteral("<!-- Channel %1 sample tile %2 (sub-block %3) -->\n%4")
+                                      .arg(channelSlot + 1)
+                                      .arg(sampleIndex + 1)
+                                      .arg(subblockIndex)
+                                      .arg(xml);
+                }
+            }
+
+            item.insert(QStringLiteral("sampledSubBlocks"), sampledSubblocks);
+            item.insert(QStringLiteral("sampledTileCount"), sampleCount);
+            item.insert(QStringLiteral("omittedTileCount"), std::max(0, static_cast<int>(subblockIndices.size()) - sampleCount));
+            item.insert(QStringLiteral("hasMetadataXml"), !sampledXml.isEmpty());
             channelArray.push_back(item);
 
-            if (!xml.trimmed().isEmpty()) {
-                rawSections << QStringLiteral("<!-- Channel %1: %2 -->\n%3")
-                                   .arg(channelSlot + 1)
-                                   .arg(channelSlot < info_.channels.size() ? info_.channels.at(channelSlot).name : QStringLiteral("Channel %1").arg(channelSlot + 1))
-                                   .arg(xml);
+            if (!sampledXml.isEmpty()) {
+                rawSections << sampledXml.join(QStringLiteral("\n\n"));
             }
         } catch (const std::exception &exception) {
             if (errorMessage) {
@@ -472,7 +603,7 @@ MetadataSection CziReader::frameMetadataSection(int sequenceIndex, QString *erro
 
     return jsonMetadataSection(QStringLiteral("Frame Metadata"),
                                channelArray,
-                               rawSections.isEmpty() ? QStringLiteral("No frame-level XML metadata was found for the current CZI plane.")
+                               rawSections.isEmpty() ? QStringLiteral("No sampled frame-level XML metadata was found for the current CZI plane.")
                                                      : rawSections.join(QStringLiteral("\n\n")));
 }
 
@@ -481,13 +612,8 @@ bool CziReader::loadDocumentInfo(QString *errorMessage)
     info_.metadataSections.clear();
     loopBindings_.clear();
     channelValues_.clear();
-    sequenceCoordinates_.clear();
-    sequenceSubblockIndices_.clear();
+    sequencePlanes_.clear();
     coordsToSequence_.clear();
-
-    if (hasUnsupportedPyramidData(errorMessage)) {
-        return false;
-    }
 
     if (!buildSequenceMap(errorMessage)) {
         return false;
@@ -523,27 +649,6 @@ bool CziReader::loadDocumentInfo(QString *errorMessage)
     return true;
 }
 
-bool CziReader::hasUnsupportedPyramidData(QString *errorMessage) const
-{
-    try {
-        const libCZI::PyramidStatistics pyramidStatistics = reader_->GetPyramidStatistics();
-        for (const auto &[sceneIndex, layers] : pyramidStatistics.scenePyramidStatistics) {
-            Q_UNUSED(sceneIndex);
-            for (const auto &layer : layers) {
-                if (!layer.layerInfo.IsLayer0()) {
-                    if (errorMessage) {
-                        *errorMessage = unsupportedMessage(QStringLiteral("pyramid layers are present"));
-                    }
-                    return true;
-                }
-            }
-        }
-    } catch (const std::exception &) {
-    }
-
-    return false;
-}
-
 bool CziReader::validateSubBlockInfo(const libCZI::SubBlockInfo &subBlockInfo, QString *errorMessage) const
 {
     if (!isSupportedPixelType(subBlockInfo.pixelType)) {
@@ -556,14 +661,6 @@ bool CziReader::validateSubBlockInfo(const libCZI::SubBlockInfo &subBlockInfo, Q
     if (subBlockInfo.logicalRect.w <= 0 || subBlockInfo.logicalRect.h <= 0) {
         if (errorMessage) {
             *errorMessage = unsupportedMessage(QStringLiteral("a plane has invalid bounds"));
-        }
-        return false;
-    }
-
-    if (subBlockInfo.logicalRect.w != static_cast<int>(subBlockInfo.physicalSize.w)
-        || subBlockInfo.logicalRect.h != static_cast<int>(subBlockInfo.physicalSize.h)) {
-        if (errorMessage) {
-            *errorMessage = unsupportedMessage(QStringLiteral("tiled, scaled, or non-layer0 planes are present"));
         }
         return false;
     }
@@ -604,17 +701,28 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         info_.loops.push_back(loop);
     }
 
+    struct ChannelPlaneRecord
+    {
+        bool initialized = false;
+        libCZI::PixelType pixelType = libCZI::PixelType::Invalid;
+        libCZI::IntRect frameRect = {0, 0, 0, 0};
+        QVector<int> subblockIndices;
+    };
+
     struct PlaneRecord
     {
         bool initialized = false;
-        QSize frameSize;
         libCZI::PixelType pixelType = libCZI::PixelType::Invalid;
-        std::map<int, int> subblockByChannel;
+        std::map<int, ChannelPlaneRecord> channels;
     };
 
     std::map<QString, PlaneRecord> planeRecords;
     QString failureMessage;
     reader_->EnumerateSubBlocks([&](int index, const libCZI::SubBlockInfo &subBlockInfo) {
+        if (!isLayer0SubBlock(subBlockInfo)) {
+            return true;
+        }
+
         if (!validateSubBlockInfo(subBlockInfo, &failureMessage)) {
             return false;
         }
@@ -639,22 +747,26 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         actualChannels.insert(actualChannel);
 
         PlaneRecord &record = planeRecords[coordinateKey(viewerCoords)];
-        const QSize currentSize(subBlockInfo.logicalRect.w, subBlockInfo.logicalRect.h);
         if (!record.initialized) {
             record.initialized = true;
-            record.frameSize = currentSize;
             record.pixelType = subBlockInfo.pixelType;
-        } else if (record.frameSize != currentSize || record.pixelType != subBlockInfo.pixelType) {
-            failureMessage = unsupportedMessage(QStringLiteral("a plane mixes channel sizes or pixel types"));
+        } else if (record.pixelType != subBlockInfo.pixelType) {
+            failureMessage = unsupportedMessage(QStringLiteral("a plane mixes channel pixel types"));
             return false;
         }
 
-        if (record.subblockByChannel.contains(actualChannel)) {
-            failureMessage = unsupportedMessage(QStringLiteral("multiple sub-blocks are required for a single plane/channel combination"));
+        ChannelPlaneRecord &channelRecord = record.channels[actualChannel];
+        if (!channelRecord.initialized) {
+            channelRecord.initialized = true;
+            channelRecord.pixelType = subBlockInfo.pixelType;
+            channelRecord.frameRect = subBlockInfo.logicalRect;
+        } else if (channelRecord.pixelType != subBlockInfo.pixelType) {
+            failureMessage = unsupportedMessage(QStringLiteral("a plane mixes channel pixel types"));
             return false;
         }
 
-        record.subblockByChannel.emplace(actualChannel, index);
+        channelRecord.frameRect = unitedRect(channelRecord.frameRect, subBlockInfo.logicalRect);
+        channelRecord.subblockIndices.push_back(index);
         return true;
     });
 
@@ -754,33 +866,68 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         return std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
     });
 
+    QSize resolvedFrameSize;
+    libCZI::PixelType resolvedPixelType = libCZI::PixelType::Invalid;
     for (const QVector<int> &coords : sortedCoordinates) {
         const PlaneRecord &record = planeRecords.at(coordinateKey(coords));
-        QVector<int> subblocks;
-        subblocks.reserve(channelValues_.size());
+        SequencePlane sequencePlane;
+        sequencePlane.coordinates = coords;
+        sequencePlane.channelSubblockIndices.reserve(channelValues_.size());
+
+        libCZI::IntRect planeRect = {0, 0, 0, 0};
+        bool havePlaneRect = false;
         for (int actualChannel : std::as_const(channelValues_)) {
-            const auto it = record.subblockByChannel.find(actualChannel);
-            if (it == record.subblockByChannel.end()) {
+            const auto it = record.channels.find(actualChannel);
+            if (it == record.channels.end() || it->second.subblockIndices.isEmpty()) {
                 if (errorMessage) {
                     *errorMessage = unsupportedMessage(QStringLiteral("channel coverage is irregular across planes"));
                 }
                 return false;
             }
-            subblocks.push_back(it->second);
+
+            const ChannelPlaneRecord &channelRecord = it->second;
+            if (!havePlaneRect) {
+                planeRect = channelRecord.frameRect;
+                havePlaneRect = true;
+            } else if (!rectsEqual(planeRect, channelRecord.frameRect)) {
+                if (errorMessage) {
+                    *errorMessage = unsupportedMessage(QStringLiteral("channel bounds differ within a layer-0 plane"));
+                }
+                return false;
+            }
+
+            sequencePlane.channelSubblockIndices.push_back(channelRecord.subblockIndices);
         }
 
-        sequenceCoordinates_.push_back(coords);
-        sequenceSubblockIndices_.push_back(subblocks);
-        coordsToSequence_.insert(coordinateKey(coords), sequenceCoordinates_.size() - 1);
+        if (!havePlaneRect || planeRect.w <= 0 || planeRect.h <= 0) {
+            if (errorMessage) {
+                *errorMessage = unsupportedMessage(QStringLiteral("a plane has invalid layer-0 bounds"));
+            }
+            return false;
+        }
+
+        const QSize planeSize(planeRect.w, planeRect.h);
+        if (!resolvedFrameSize.isValid()) {
+            resolvedFrameSize = planeSize;
+            resolvedPixelType = record.pixelType;
+        } else if (resolvedFrameSize != planeSize || resolvedPixelType != record.pixelType) {
+            if (errorMessage) {
+                *errorMessage = unsupportedMessage(QStringLiteral("plane extents or pixel types vary across loop coordinates"));
+            }
+            return false;
+        }
+
+        sequencePlane.frameRect = planeRect;
+        sequencePlanes_.push_back(sequencePlane);
+        coordsToSequence_.insert(coordinateKey(coords), sequencePlanes_.size() - 1);
     }
 
-    const PlaneRecord &firstPlane = planeRecords.begin()->second;
-    info_.frameSize = firstPlane.frameSize;
-    info_.sequenceCount = sequenceSubblockIndices_.size();
-    info_.componentCount = channelValues_.size();
-    info_.bitsPerComponentInMemory = bitsPerComponentFor(firstPlane.pixelType);
+    info_.frameSize = resolvedFrameSize;
+    info_.sequenceCount = static_cast<int>(sequencePlanes_.size());
+    info_.componentCount = static_cast<int>(channelValues_.size());
+    info_.bitsPerComponentInMemory = bitsPerComponentFor(resolvedPixelType);
     info_.bitsPerComponentSignificant = info_.bitsPerComponentInMemory;
-    info_.pixelDataType = pixelDataTypeFor(firstPlane.pixelType);
+    info_.pixelDataType = pixelDataTypeFor(resolvedPixelType);
 
     if (metadataDocInfo) {
         const libCZI::ScalingInfo scalingInfo = metadataDocInfo->GetScalingInfo();
@@ -844,6 +991,35 @@ QJsonObject CziReader::buildSummaryMetadata(const QString &metadataXml) const
             }
         }
         summary.insert(QStringLiteral("dimensionBounds"), dimensionBounds);
+    } catch (const std::exception &) {
+    }
+
+    try {
+        const libCZI::PyramidStatistics pyramidStatistics = reader_->GetPyramidStatistics();
+        QJsonObject pyramidObject;
+        bool hasIgnoredHigherLayers = false;
+        for (const auto &[sceneIndex, layers] : pyramidStatistics.scenePyramidStatistics) {
+            QJsonArray sceneLayers;
+            for (const auto &layer : layers) {
+                QJsonObject layerObject{
+                    {QStringLiteral("minificationFactor"), static_cast<int>(layer.layerInfo.minificationFactor)},
+                    {QStringLiteral("pyramidLayerNo"), static_cast<int>(layer.layerInfo.pyramidLayerNo)},
+                    {QStringLiteral("count"), layer.count},
+                    {QStringLiteral("isLayer0"), layer.layerInfo.IsLayer0()},
+                };
+                sceneLayers.push_back(layerObject);
+                hasIgnoredHigherLayers = hasIgnoredHigherLayers || !layer.layerInfo.IsLayer0();
+            }
+
+            const QString sceneKey = sceneIndex == (std::numeric_limits<int>::max)()
+                                         ? QStringLiteral("invalidSceneIndex")
+                                         : QString::number(sceneIndex);
+            pyramidObject.insert(sceneKey, sceneLayers);
+        }
+
+        summary.insert(QStringLiteral("pyramidStatistics"), pyramidObject);
+        summary.insert(QStringLiteral("ignoresHigherPyramidLevels"), hasIgnoredHigherLayers);
+        summary.insert(QStringLiteral("layer0ReadoutMode"), QStringLiteral("fullPlane"));
     } catch (const std::exception &) {
     }
 

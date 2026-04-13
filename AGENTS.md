@@ -59,7 +59,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output should now use the `0.1.5` version string, for example `dist\nd2-viewer-0.1.5-win64.exe`.
+- A successful recent package output should now use the `0.1.6` version string, for example `dist\nd2-viewer-0.1.6-win64.exe`.
 - On Windows, the default install prefix is now per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
 - `scripts/build-msvc.ps1` now runs `windeployqt` after a successful build so the build tree is directly runnable.
 - `scripts/build-macos.sh` now runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable.

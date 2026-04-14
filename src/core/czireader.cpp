@@ -1095,6 +1095,10 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         info_.axesCalibration = QVector3D(static_cast<float>(scalingInfo.scaleX),
                                           static_cast<float>(scalingInfo.scaleY),
                                           static_cast<float>(scalingInfo.scaleZ));
+        if (selectedPyramidScale_ > 1) {
+            info_.axesCalibration.setX(info_.axesCalibration.x() * selectedPyramidScale_);
+            info_.axesCalibration.setY(info_.axesCalibration.y() * selectedPyramidScale_);
+        }
     }
 
     return true;

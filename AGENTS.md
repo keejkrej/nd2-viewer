@@ -82,9 +82,11 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - Navigator sliders are intentionally deferred now: moving a slider updates the paired spin box immediately, but frame loads commit only when the slider interaction ends.
 - Coordinate-driven frame loads now prepare metadata, auto-contrast, and rendered images off the UI thread before applying the result.
+- The app-facing reader API is now coordinate-first for both ND2 and CZI: normal frame reads and frame-metadata reads use loop coordinates, while sequence indices are retained mainly for diagnostics and status text.
 - Spin boxes still commit immediately for precise stepping.
 - The CZI reader now composes standard, sparse, tiled, mosaic, and pyramid planes, and it may choose a shared higher pyramid level for normal viewing when that keeps large documents responsive.
 - CZI `Phase`, `View`, and `Block` dimensions are part of the existing dynamic loop model already present before `v0.1.6`; the `0.1.6` CZI work was about irregular plane composition and pyramid handling, not adding those loops.
+- ND2 and CZI read errors should now be surfaced from the higher-level coordinate read path, so user-visible messages name loop coordinates like `Time=51, Z=9, Phase=0` instead of only a global frame number.
 - `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
 - The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
 - The integrated `3D` mode is available for files with a usable z-loop and reuses the main viewer instead of opening a separate window.

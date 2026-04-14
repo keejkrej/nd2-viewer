@@ -227,10 +227,12 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.
+- The app now treats loop coordinates as the primary reader API for both ND2 and CZI. Frame reads and frame-metadata reads go through coordinate-based access, while sequence indices remain backend details used mainly for status text and diagnostics.
 - The CZI reader now composes standard, sparse, tiled, mosaic, and pyramid CZI planes through `libCZI`, including shared higher pyramid levels when they are selected for normal viewing.
 - CZI phase/view/block loop parsing is not new to `0.1.6`; those dimensions were already exposed through the dynamic loop model before `v0.1.5`.
 - The current CZI reader still does not do ROI-aware virtualized loading; it composes the selected plane or pyramid level into a full frame for viewing.
 - In 3D, CZI pyramid-backed volumes now keep the correct physical XY spacing for the selected pyramid layer, so downsampled pyramid reads do not exaggerate Z thickness.
+- Plane read failures are now reported with loop coordinates when available, for example `Time=51, Z=9, Phase=0`, instead of only a global frame number.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - The integrated `3D` mode is enabled only for files with a usable z-loop and reuses the current shared viewer state.

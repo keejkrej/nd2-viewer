@@ -6,10 +6,15 @@ All notable changes to `nd2-viewer` are documented in this file.
 
 ### Changed
 - Bumped the project version to `0.1.7`.
+- Standardized the app-facing ND2/CZI reader flow around coordinate-based access for frame reads and frame metadata reads, while keeping sequence indices as backend details and diagnostics.
 
 ### Fixed
 - Hardened Windows Qt deployment so release builds and packaged installs now bundle the full ICU runtime set (`icu.dll`, `icuin.dll`, `icuuc.dll`) instead of relying on whatever `windeployqt` happens to copy from the local machine.
 - Added a package-time validation check that refuses to build a Windows installer or ZIP when the release runtime payload is missing the required ICU DLLs.
+- Changed ND2 and CZI plane read failures to report loop coordinates such as `Time=51, Z=9, Phase=0` instead of only a global frame number, while low-level backend readers now propagate raw SDK/libCZI errors upward.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` to describe the coordinate-first reader API and the current coordinate-based error reporting behavior.
 
 ## [0.1.6] - 2026-04-13
 

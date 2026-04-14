@@ -4,10 +4,14 @@
 #include "core/framerenderer.h"
 
 #include <QBuffer>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMediaCaptureSession>
 #include <QMediaFormat>
 #include <QMediaRecorder>
+#include <QSet>
+#include <QTextStream>
 #include <QThread>
 #include <QUrl>
 #include <QVideoFrame>
@@ -126,6 +130,60 @@ MovieExportResult validateSettingsWithReader(const MovieExportSettings &settings
 }
 } // namespace
 
+QString buildMovieExportWarningReportPath(const QString &outputPath)
+{
+    const QFileInfo info(outputPath);
+    return info.dir().filePath(info.completeBaseName() + QStringLiteral(".warnings.txt"));
+}
+
+bool writeMovieExportWarningReport(const QString &reportPath,
+                                   const MovieExportSettings &settings,
+                                   bool volumeView,
+                                   const QVector<ReadIssue> &issues,
+                                   QString *errorMessage)
+{
+    QFile file(reportPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Could not write %1.").arg(QDir::toNativeSeparators(reportPath));
+        }
+        return false;
+    }
+
+    QSet<int> affectedTimeValues;
+    for (const ReadIssue &issue : issues) {
+        if (settings.timeLoopIndex >= 0 && settings.timeLoopIndex < issue.coordinates.size()) {
+            affectedTimeValues.insert(issue.coordinates.at(settings.timeLoopIndex));
+        }
+    }
+
+    QTextStream stream(&file);
+    stream << "nd2-viewer movie export warning report\n";
+    stream << "Mode: " << (volumeView ? "3D" : "2D") << "\n";
+    stream << "Policy: SubstituteBlack\n";
+    stream << "Source: " << QDir::toNativeSeparators(settings.sourcePath) << "\n";
+    stream << "Output: " << QDir::toNativeSeparators(settings.outputPath) << "\n";
+    stream << "Affected export timepoints: " << affectedTimeValues.size() << "\n";
+    stream << "Underlying read substitutions: " << issues.size() << "\n\n";
+
+    for (const ReadIssue &issue : issues) {
+        stream << "- ";
+        stream << (issue.kind == ReadIssueKind::FrameSubstituted ? "frame-substituted" : "metadata-unavailable");
+        if (!issue.coordinateSummary.isEmpty()) {
+            stream << " at " << issue.coordinateSummary;
+        }
+        if (issue.sequenceIndex >= 0) {
+            stream << " (sequence " << issue.sequenceIndex + 1 << ")";
+        }
+        if (!issue.message.isEmpty()) {
+            stream << ": " << issue.message;
+        }
+        stream << "\n";
+    }
+
+    return true;
+}
+
 QVector<int> buildTimeFrameValues(int startFrame, int endFrame, int step)
 {
     QVector<int> values;
@@ -208,6 +266,7 @@ int movieExportFrameCount(const MovieExportSettings &settings)
 MovieExportWorker::MovieExportWorker(const MovieExportSettings &settings, QObject *parent)
     : QObject(parent)
     , settings_(settings)
+    , readIssueLog_(std::make_shared<ReadIssueLog>())
     , workingChannelSettings_(settings.channelSettings)
 {
     result_.outputPath = settings_.outputPath;
@@ -237,7 +296,10 @@ void MovieExportWorker::start()
 MovieExportResult MovieExportWorker::validateSettings() const
 {
     QString errorMessage;
-    reader_ = createDocumentReaderForPath(settings_.sourcePath, &errorMessage);
+    DocumentReaderOptions options;
+    options.failurePolicy = ReadFailurePolicy::SubstituteBlack;
+    options.issueLog = readIssueLog_;
+    reader_ = createDocumentReaderForPath(settings_.sourcePath, options, &errorMessage);
     if (!reader_) {
         MovieExportResult result;
         result.outputPath = settings_.outputPath;
@@ -369,9 +431,21 @@ void MovieExportWorker::finishSuccessfully()
         return;
     }
 
+    const QVector<ReadIssue> issues = readIssueLog_ ? readIssueLog_->snapshot() : QVector<ReadIssue>{};
     completionEmitted_ = true;
     result_.success = true;
-    result_.errorMessage.clear();
+    result_.substitutedReadCount = issues.size();
+    if (!issues.isEmpty()) {
+        QString reportError;
+        const QString reportPath = buildMovieExportWarningReportPath(settings_.outputPath);
+        if (writeMovieExportWarningReport(reportPath, settings_, false, issues, &reportError)) {
+            result_.warningReportPath = reportPath;
+        } else {
+            result_.errorMessage = reportError;
+        }
+    } else {
+        result_.errorMessage.clear();
+    }
     result_.bytesWritten = QFileInfo(result_.outputPath).exists() ? QFileInfo(result_.outputPath).size() : 0;
     if (reader_) {
         reader_->close();

@@ -1,5 +1,7 @@
 #include "core/documentcontroller.h"
 
+#include "core/policydocumentreader.h"
+
 #include <QtConcurrent>
 
 namespace
@@ -47,7 +49,9 @@ bool DocumentController::openFile(const QString &path)
     closeFile();
 
     QString errorMessage;
-    reader_ = createDocumentReaderForPath(path, &errorMessage);
+    DocumentReaderOptions options = readOptions_;
+    options.forcePolicyWrapper = true;
+    reader_ = createDocumentReaderForPath(path, options, &errorMessage);
     if (!reader_) {
         emit errorOccurred(errorMessage);
         return false;
@@ -102,6 +106,7 @@ void DocumentController::closeFile()
     channelSettingsRevision_ = 0;
     liveAutoEnabled_ = false;
     pendingInitialAutoContrast_ = false;
+    readOptions_ = {};
     setBusy(false);
 }
 
@@ -153,6 +158,20 @@ const MetadataSection &DocumentController::currentFrameMetadataSection() const
 QString DocumentController::pixelInfoAt(const QPoint &pixelPosition) const
 {
     return FrameRenderer::pixelDescription(currentRawFrame_, pixelPosition);
+}
+
+void DocumentController::setReadOptions(const DocumentReaderOptions &options)
+{
+    readOptions_ = options;
+    readOptions_.forcePolicyWrapper = true;
+    if (auto *policyReader = dynamic_cast<PolicyDocumentReader *>(reader_.get())) {
+        policyReader->setOptions(readOptions_);
+    }
+}
+
+DocumentReaderOptions DocumentController::readOptions() const
+{
+    return readOptions_;
 }
 
 void DocumentController::setCoordinateValue(int loopIndex, int value)

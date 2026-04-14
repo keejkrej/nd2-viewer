@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/movieexporter.h"
+#include "core/readfailurepolicy.h"
 #include "core/documentcontroller.h"
 #include "core/volumeloader.h"
 #include "ui/volumeviewport3d.h"
@@ -134,8 +135,8 @@ private:
     void finishMovieExportPlayback(const QString &errorMessage = QString());
     void cleanupMovieExportPlayback();
     void restoreVolumeViewportAfterMovieExport();
-    [[nodiscard]] QImage renderMovieExportFrameImage(int timeValue, QString *errorMessage) const;
     [[nodiscard]] QString movieExportBackendUnsupportedReason() const;
+    [[nodiscard]] DocumentReaderOptions movieExportReaderOptions() const;
     void openAutoContrastTuningDialog(int channelIndex);
     void applyVolumeViewMode(bool volumeViewActive);
     void applyZLoopNavigatorLock();
@@ -195,10 +196,13 @@ private:
     bool movieExportPendingEndOfStream_ = false;
     bool movieExportEndOfStreamSent_ = false;
     bool movieVideoFrameInputReady_ = false;
+    bool movieExportRestoringState_ = false;
     bool movieExportVolumeView_ = false;
     QVector<ChannelRenderSettings> movieExportFrozenChannelSettings_;
     QVector<ChannelRenderSettings> movieExportOriginalChannelSettings_;
     bool movieExportOriginalLiveAutoEnabled_ = false;
+    int movieExportOriginalTimeValue_ = -1;
+    std::shared_ptr<ReadIssueLog> movieExportReadIssueLog_;
     VolumeViewport3DCameraState movieExportFrozenCameraState_;
     RawVolume movieExportOriginalVolume_;
     VolumeViewport3DCameraState movieExportOriginalCameraState_;

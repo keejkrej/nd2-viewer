@@ -3,6 +3,7 @@
 #include "core/documentreader.h"
 #include "core/documentreaderfactory.h"
 #include "core/framerenderer.h"
+#include "core/readfailurepolicy.h"
 
 #include <QFutureWatcher>
 #include <QObject>
@@ -30,6 +31,8 @@ public:
     [[nodiscard]] const RawFrame &currentRawFrame() const;
     [[nodiscard]] const MetadataSection &currentFrameMetadataSection() const;
     [[nodiscard]] QString pixelInfoAt(const QPoint &pixelPosition) const;
+    void setReadOptions(const DocumentReaderOptions &options);
+    [[nodiscard]] DocumentReaderOptions readOptions() const;
 
 public slots:
     void setCoordinateValue(int loopIndex, int value);
@@ -87,5 +90,6 @@ private:
     bool liveAutoEnabled_ = false;
     bool pendingInitialAutoContrast_ = false;
     bool busy_ = false;
+    DocumentReaderOptions readOptions_;
     QFutureWatcher<FrameLoadResult> frameWatcher_;
 };

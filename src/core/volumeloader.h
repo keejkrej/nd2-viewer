@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/readfailurepolicy.h"
 #include "core/documenttypes.h"
 
 #include <QString>
@@ -20,5 +21,6 @@ public:
     [[nodiscard]] static VolumeLoadResult load(const QString &path,
                                                const DocumentInfo &info,
                                                const FrameCoordinateState &coordinates,
-                                               const QVector<ChannelRenderSettings> &seedChannelSettings);
+                                               const QVector<ChannelRenderSettings> &seedChannelSettings,
+                                               DocumentReaderOptions readerOptions = {});
 };

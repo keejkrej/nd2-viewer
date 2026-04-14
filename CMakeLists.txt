@@ -145,6 +145,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/documentreaderfactory.cpp
   src/core/documentreaderfactory.h
   src/core/documenttypes.h
+  src/core/policydocumentreader.cpp
+  src/core/policydocumentreader.h
   src/core/czireader.cpp
   src/core/czireader.h
   src/core/framerenderer.cpp
@@ -153,6 +155,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/movieexporter.h
   src/core/nd2reader.cpp
   src/core/nd2reader.h
+  src/core/readfailurepolicy.cpp
+  src/core/readfailurepolicy.h
   src/core/volumeloader.cpp
   src/core/volumeloader.h
   src/core/volumeutils.cpp

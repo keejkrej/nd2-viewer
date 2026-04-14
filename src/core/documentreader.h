@@ -2,9 +2,13 @@
 
 #include "core/documenttypes.h"
 
+class PolicyDocumentReader;
+
 class DocumentReader
 {
 public:
+    friend class PolicyDocumentReader;
+
     virtual ~DocumentReader() = default;
 
     virtual bool open(const QString &path, QString *errorMessage = nullptr) = 0;

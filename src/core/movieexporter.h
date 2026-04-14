@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/documentreader.h"
+#include "core/readfailurepolicy.h"
 #include "core/documenttypes.h"
 
 #include <QObject>
@@ -48,7 +49,9 @@ struct MovieExportResult
     bool success = false;
     int encodedFrameCount = 0;
     qint64 bytesWritten = 0;
+    int substitutedReadCount = 0;
     QString outputPath;
+    QString warningReportPath;
     QString errorMessage;
 };
 
@@ -60,6 +63,12 @@ Q_DECLARE_METATYPE(MovieExportResult)
 [[nodiscard]] QVector<int> buildTimeFrameValues(const MovieExportSettings &settings);
 [[nodiscard]] MovieExportEstimate estimateMovieExport(const MovieExportSettings &settings, const QImage &sampleImage);
 [[nodiscard]] int movieExportFrameCount(const MovieExportSettings &settings);
+[[nodiscard]] QString buildMovieExportWarningReportPath(const QString &outputPath);
+bool writeMovieExportWarningReport(const QString &reportPath,
+                                   const MovieExportSettings &settings,
+                                   bool volumeView,
+                                   const QVector<ReadIssue> &issues,
+                                   QString *errorMessage = nullptr);
 
 class QMediaCaptureSession;
 class QMediaRecorder;
@@ -90,6 +99,7 @@ private:
 
     MovieExportSettings settings_;
     mutable std::unique_ptr<DocumentReader> reader_;
+    std::shared_ptr<ReadIssueLog> readIssueLog_;
     QVector<ChannelRenderSettings> workingChannelSettings_;
     QVector<int> timeValues_;
     MovieExportResult result_;

@@ -67,7 +67,8 @@ bool copyPlaneToVolume(const RawFrame &frame, RawVolume &volume, int zIndex, QSt
 VolumeLoadResult VolumeLoader::load(const QString &path,
                                     const DocumentInfo &info,
                                     const FrameCoordinateState &coordinates,
-                                    const QVector<ChannelRenderSettings> &seedChannelSettings)
+                                    const QVector<ChannelRenderSettings> &seedChannelSettings,
+                                    DocumentReaderOptions readerOptions)
 {
     VolumeLoadResult result;
     qInfo("3D volume load requested: path=%s loops=%lld channels=%lld frame=%dx%d",
@@ -84,7 +85,7 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
     }
 
     QString readerError;
-    std::unique_ptr<DocumentReader> reader = createDocumentReaderForPath(path, &readerError);
+    std::unique_ptr<DocumentReader> reader = createDocumentReaderForPath(path, readerOptions, &readerError);
     if (!reader) {
         result.error = readerError;
         return result;

@@ -78,4 +78,7 @@ private:
     QVector<int> channelValues_;
     QVector<SequencePlane> sequencePlanes_;
     QHash<QString, int> coordsToSequence_;
+    libCZI::IntRect documentFrameRect_ = {0, 0, 0, 0};
+    libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo selectedPyramidLayer_ = {0, 0};
+    int selectedPyramidScale_ = 1;
 };

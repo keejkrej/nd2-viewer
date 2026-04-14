@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutexLocker>
+#include <QSize>
 
 #include <algorithm>
 #include <array>
@@ -13,8 +14,12 @@
 #include <set>
 #include <string>
 
+#include <libCZI_Utilities.h>
+
 namespace
 {
+constexpr int kPreferredPyramidEdge = 2000;
+
 QJsonObject rectToJson(const libCZI::IntRect &rect)
 {
     return {
@@ -80,6 +85,31 @@ libCZI::IntRect unitedRect(const libCZI::IntRect &lhs, const libCZI::IntRect &rh
     const int right = std::max(lhs.x + lhs.w, rhs.x + rhs.w);
     const int bottom = std::max(lhs.y + lhs.h, rhs.y + rhs.h);
     return {left, top, right - left, bottom - top};
+}
+
+bool isLayer0PyramidLayer(const libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo &layerInfo)
+{
+    return layerInfo.minificationFactor == 0 && layerInfo.pyramidLayerNo == 0;
+}
+
+int effectivePyramidScale(const libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo &layerInfo)
+{
+    if (isLayer0PyramidLayer(layerInfo)) {
+        return 1;
+    }
+
+    int scale = 1;
+    for (int i = 0; i < layerInfo.pyramidLayerNo; ++i) {
+        scale *= static_cast<int>(layerInfo.minificationFactor);
+    }
+
+    return qMax(scale, 1);
+}
+
+QSize scaledFrameSize(const libCZI::IntRect &rect, int scale)
+{
+    return QSize(qMax(1, rect.w / qMax(scale, 1)),
+                 qMax(1, rect.h / qMax(scale, 1)));
 }
 } // namespace
 
@@ -150,6 +180,9 @@ void CziReader::close()
     channelValues_.clear();
     sequencePlanes_.clear();
     coordsToSequence_.clear();
+    documentFrameRect_ = {0, 0, 0, 0};
+    selectedPyramidLayer_ = {0, 0};
+    selectedPyramidScale_ = 1;
 }
 
 bool CziReader::isOpen() const
@@ -410,6 +443,7 @@ bool CziReader::planeCoordinateForChannel(const SequencePlane &sequencePlane,
 
     if (coordinate) {
         *coordinate = subBlockInfo.coordinate;
+        coordinate->Clear(libCZI::DimensionIndex::S);
     }
 
     if (pixelType) {
@@ -429,21 +463,53 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
         return frame;
     }
 
-    const bool requiresTileComposition = std::any_of(sequencePlane->channelSubblockIndices.cbegin(),
-                                                     sequencePlane->channelSubblockIndices.cend(),
-                                                     [](const QVector<int> &indices) { return indices.size() != 1; });
+    const libCZI::IntRect targetFrameRect =
+        (documentFrameRect_.w > 0 && documentFrameRect_.h > 0) ? documentFrameRect_ : sequencePlane->frameRect;
+    const bool usePyramidLayer = !isLayer0PyramidLayer(selectedPyramidLayer_);
+    const bool requiresTileComposition =
+        usePyramidLayer
+        || std::any_of(sequencePlane->channelSubblockIndices.cbegin(),
+                       sequencePlane->channelSubblockIndices.cend(),
+                       [](const QVector<int> &indices) { return indices.size() > 1; });
+
+    int actualScene = -1;
+    for (int bindingIndex = 0; bindingIndex < loopBindings_.size() && bindingIndex < sequencePlane->coordinates.size(); ++bindingIndex) {
+        const LoopBinding &binding = loopBindings_.at(bindingIndex);
+        if (binding.dimension == libCZI::DimensionIndex::S) {
+            actualScene = binding.start + sequencePlane->coordinates.at(bindingIndex);
+            break;
+        }
+    }
+
+    std::shared_ptr<libCZI::IIndexSet> sceneFilter;
+    if (actualScene >= 0) {
+        sceneFilter = libCZI::Utils::IndexSetFromString(std::to_wstring(actualScene));
+    }
+
+    const QSize targetFrameSize = usePyramidLayer ? scaledFrameSize(targetFrameRect, selectedPyramidScale_)
+                                                  : QSize(targetFrameRect.w, targetFrameRect.h);
 
     frame.sequenceIndex = sequenceIndex;
-    frame.width = sequencePlane->frameRect.w;
-    frame.height = sequencePlane->frameRect.h;
+    frame.width = targetFrameSize.width();
+    frame.height = targetFrameSize.height();
     frame.bitsPerComponent = info_.bitsPerComponentSignificant > 0 ? info_.bitsPerComponentSignificant : info_.bitsPerComponentInMemory;
     frame.components = static_cast<int>(sequencePlane->channelSubblockIndices.size());
     frame.pixelDataType = info_.pixelDataType;
     frame.bytesPerLine = static_cast<qsizetype>(frame.width) * frame.components * frame.bytesPerComponent();
     frame.data.resize(frame.bytesPerLine * frame.height);
+    std::memset(frame.data.data(), 0, static_cast<size_t>(frame.data.size()));
 
     std::shared_ptr<libCZI::ISingleChannelTileAccessor> tileAccessor;
-    if (requiresTileComposition) {
+    std::shared_ptr<libCZI::ISingleChannelPyramidLayerTileAccessor> pyramidAccessor;
+    if (usePyramidLayer) {
+        pyramidAccessor = reader_->CreateSingleChannelPyramidLayerTileAccessor();
+        if (!pyramidAccessor) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("libCZI could not create a pyramid accessor for this CZI plane.");
+            }
+            return {};
+        }
+    } else if (requiresTileComposition) {
         tileAccessor = reader_->CreateSingleChannelTileAccessor();
         if (!tileAccessor) {
             if (errorMessage) {
@@ -454,9 +520,27 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
     }
 
     for (int channelSlot = 0; channelSlot < sequencePlane->channelSubblockIndices.size(); ++channelSlot) {
+        const QVector<int> &subblockIndices = sequencePlane->channelSubblockIndices.at(channelSlot);
+        if (subblockIndices.isEmpty()) {
+            continue;
+        }
+
         std::shared_ptr<libCZI::IBitmapData> bitmap;
         try {
-            if (requiresTileComposition) {
+            if (usePyramidLayer) {
+                libCZI::CDimCoordinate planeCoordinate;
+                libCZI::PixelType pixelType = libCZI::PixelType::Invalid;
+                if (!planeCoordinateForChannel(*sequencePlane, channelSlot, &planeCoordinate, &pixelType, errorMessage)) {
+                    return {};
+                }
+
+                libCZI::ISingleChannelPyramidLayerTileAccessor::Options options;
+                options.Clear();
+                options.backGroundColor = {0.0f, 0.0f, 0.0f};
+                options.sortByM = true;
+                options.sceneFilter = sceneFilter;
+                bitmap = pyramidAccessor->Get(pixelType, targetFrameRect, &planeCoordinate, selectedPyramidLayer_, &options);
+            } else if (requiresTileComposition) {
                 libCZI::CDimCoordinate planeCoordinate;
                 libCZI::PixelType pixelType = libCZI::PixelType::Invalid;
                 if (!planeCoordinateForChannel(*sequencePlane, channelSlot, &planeCoordinate, &pixelType, errorMessage)) {
@@ -468,9 +552,9 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
                 options.backGroundColor = {0.0f, 0.0f, 0.0f};
                 options.sortByM = true;
                 options.useVisibilityCheckOptimization = true;
-                bitmap = tileAccessor->Get(pixelType, sequencePlane->frameRect, &planeCoordinate, &options);
+                options.sceneFilter = sceneFilter;
+                bitmap = tileAccessor->Get(pixelType, targetFrameRect, &planeCoordinate, &options);
             } else {
-                const QVector<int> &subblockIndices = sequencePlane->channelSubblockIndices.at(channelSlot);
                 const std::shared_ptr<libCZI::ISubBlock> subBlock = reader_->ReadSubBlock(subblockIndices.constFirst());
                 if (!subBlock) {
                     if (errorMessage) {
@@ -484,16 +568,21 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
 
             if (!bitmap) {
                 if (errorMessage) {
-                    *errorMessage = requiresTileComposition
-                                        ? QStringLiteral("libCZI could not compose the requested CZI plane.")
-                                        : QStringLiteral("libCZI could not decode CZI sub-block %1.")
-                                              .arg(sequencePlane->channelSubblockIndices.at(channelSlot).constFirst());
+                    *errorMessage = usePyramidLayer ? QStringLiteral("libCZI could not compose the requested CZI pyramid plane.")
+                                                    : requiresTileComposition
+                                                          ? QStringLiteral("libCZI could not compose the requested CZI plane.")
+                                                          : QStringLiteral("libCZI could not decode CZI sub-block %1.")
+                                                                .arg(subblockIndices.constFirst());
                 }
                 return {};
             }
 
             const libCZI::IntSize bitmapSize = bitmap->GetSize();
-            if (static_cast<int>(bitmapSize.w) != frame.width || static_cast<int>(bitmapSize.h) != frame.height) {
+            const int bitmapWidth = static_cast<int>(bitmapSize.w);
+            const int bitmapHeight = static_cast<int>(bitmapSize.h);
+            const int expectedWidth = usePyramidLayer ? frame.width : requiresTileComposition ? targetFrameRect.w : sequencePlane->frameRect.w;
+            const int expectedHeight = usePyramidLayer ? frame.height : requiresTileComposition ? targetFrameRect.h : sequencePlane->frameRect.h;
+            if (bitmapWidth != expectedWidth || bitmapHeight != expectedHeight) {
                 if (errorMessage) {
                     *errorMessage = unsupportedMessage(QStringLiteral("decoded layer-0 channel planes do not share the same size"));
                 }
@@ -510,13 +599,23 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
             }
 
             const int bytesPerComponent = frame.bytesPerComponent();
+            const int xOffset = (usePyramidLayer || requiresTileComposition) ? 0 : (sequencePlane->frameRect.x - targetFrameRect.x);
+            const int yOffset = (usePyramidLayer || requiresTileComposition) ? 0 : (sequencePlane->frameRect.y - targetFrameRect.y);
+            if (xOffset < 0 || yOffset < 0 || xOffset + bitmapWidth > frame.width || yOffset + bitmapHeight > frame.height) {
+                if (errorMessage) {
+                    *errorMessage = unsupportedMessage(QStringLiteral("decoded CZI plane lies outside the composed document bounds"));
+                }
+                return {};
+            }
+
             libCZI::ScopedBitmapLockerSP lockInfo{bitmap};
-            for (int y = 0; y < frame.height; ++y) {
+            for (int y = 0; y < bitmapHeight; ++y) {
                 const char *sourceRow = static_cast<const char *>(lockInfo.ptrDataRoi) + static_cast<qsizetype>(y) * lockInfo.stride;
-                char *destinationRow = frame.data.data() + static_cast<qsizetype>(y) * frame.bytesPerLine;
-                for (int x = 0; x < frame.width; ++x) {
+                char *destinationRow = frame.data.data() + static_cast<qsizetype>(y + yOffset) * frame.bytesPerLine;
+                for (int x = 0; x < bitmapWidth; ++x) {
                     const char *sourcePixel = sourceRow + static_cast<qsizetype>(x) * bytesPerComponent;
-                    char *destinationPixel = destinationRow + static_cast<qsizetype>((x * frame.components + channelSlot) * bytesPerComponent);
+                    char *destinationPixel =
+                        destinationRow + static_cast<qsizetype>(((x + xOffset) * frame.components + channelSlot) * bytesPerComponent);
                     std::memcpy(destinationPixel, sourcePixel, static_cast<size_t>(bytesPerComponent));
                 }
             }
@@ -614,6 +713,9 @@ bool CziReader::loadDocumentInfo(QString *errorMessage)
     channelValues_.clear();
     sequencePlanes_.clear();
     coordsToSequence_.clear();
+    documentFrameRect_ = {0, 0, 0, 0};
+    selectedPyramidLayer_ = {0, 0};
+    selectedPyramidScale_ = 1;
 
     if (!buildSequenceMap(errorMessage)) {
         return false;
@@ -866,7 +968,8 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         return std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
     });
 
-    QSize resolvedFrameSize;
+    libCZI::IntRect resolvedFrameRect = {0, 0, 0, 0};
+    bool haveResolvedFrameRect = false;
     libCZI::PixelType resolvedPixelType = libCZI::PixelType::Invalid;
     for (const QVector<int> &coords : sortedCoordinates) {
         const PlaneRecord &record = planeRecords.at(coordinateKey(coords));
@@ -879,10 +982,8 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
         for (int actualChannel : std::as_const(channelValues_)) {
             const auto it = record.channels.find(actualChannel);
             if (it == record.channels.end() || it->second.subblockIndices.isEmpty()) {
-                if (errorMessage) {
-                    *errorMessage = unsupportedMessage(QStringLiteral("channel coverage is irregular across planes"));
-                }
-                return false;
+                sequencePlane.channelSubblockIndices.push_back({});
+                continue;
             }
 
             const ChannelPlaneRecord &channelRecord = it->second;
@@ -906,23 +1007,83 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
             return false;
         }
 
-        const QSize planeSize(planeRect.w, planeRect.h);
-        if (!resolvedFrameSize.isValid()) {
-            resolvedFrameSize = planeSize;
+        if (!haveResolvedFrameRect) {
+            resolvedFrameRect = planeRect;
+            haveResolvedFrameRect = true;
             resolvedPixelType = record.pixelType;
-        } else if (resolvedFrameSize != planeSize || resolvedPixelType != record.pixelType) {
+        } else if (resolvedPixelType != record.pixelType) {
             if (errorMessage) {
-                *errorMessage = unsupportedMessage(QStringLiteral("plane extents or pixel types vary across loop coordinates"));
+                *errorMessage = unsupportedMessage(QStringLiteral("pixel types vary across loop coordinates"));
             }
             return false;
         }
+
+        resolvedFrameRect = unitedRect(resolvedFrameRect, planeRect);
 
         sequencePlane.frameRect = planeRect;
         sequencePlanes_.push_back(sequencePlane);
         coordsToSequence_.insert(coordinateKey(coords), sequencePlanes_.size() - 1);
     }
 
-    info_.frameSize = resolvedFrameSize;
+    documentFrameRect_ = resolvedFrameRect;
+    info_.frameSize = QSize(resolvedFrameRect.w, resolvedFrameRect.h);
+    selectedPyramidLayer_ = {0, 0};
+    selectedPyramidScale_ = 1;
+
+    try {
+        const libCZI::PyramidStatistics pyramidStatistics = reader_->GetPyramidStatistics();
+        std::map<int, libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo> commonLayers;
+        bool initializedCommonLayers = false;
+        for (const auto &[sceneIndex, layers] : pyramidStatistics.scenePyramidStatistics) {
+            Q_UNUSED(sceneIndex);
+
+            std::map<int, libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo> sceneLayers;
+            for (const auto &layer : layers) {
+                if (layer.layerInfo.IsLayer0() || layer.layerInfo.IsNotIdentifiedAsPyramidLayer()) {
+                    continue;
+                }
+
+                const libCZI::ISingleChannelPyramidLayerTileAccessor::PyramidLayerInfo layerInfo = {
+                    layer.layerInfo.minificationFactor,
+                    layer.layerInfo.pyramidLayerNo,
+                };
+                const int scale = effectivePyramidScale(layerInfo);
+                if (scale <= 1) {
+                    continue;
+                }
+
+                sceneLayers.emplace(scale, layerInfo);
+            }
+
+            if (!initializedCommonLayers) {
+                commonLayers = sceneLayers;
+                initializedCommonLayers = true;
+                continue;
+            }
+
+            for (auto it = commonLayers.begin(); it != commonLayers.end();) {
+                if (!sceneLayers.contains(it->first)) {
+                    it = commonLayers.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        if (!commonLayers.empty()) {
+            const auto preferredLayer = std::find_if(commonLayers.begin(), commonLayers.end(), [&](const auto &entry) {
+                const QSize size = scaledFrameSize(resolvedFrameRect, entry.first);
+                return size.width() <= kPreferredPyramidEdge && size.height() <= kPreferredPyramidEdge;
+            });
+
+            const auto chosenLayer = preferredLayer != commonLayers.end() ? preferredLayer : std::prev(commonLayers.end());
+            selectedPyramidLayer_ = chosenLayer->second;
+            selectedPyramidScale_ = chosenLayer->first;
+            info_.frameSize = scaledFrameSize(resolvedFrameRect, selectedPyramidScale_);
+        }
+    } catch (const std::exception &) {
+    }
+
     info_.sequenceCount = static_cast<int>(sequencePlanes_.size());
     info_.componentCount = static_cast<int>(channelValues_.size());
     info_.bitsPerComponentInMemory = bitsPerComponentFor(resolvedPixelType);
@@ -1018,8 +1179,14 @@ QJsonObject CziReader::buildSummaryMetadata(const QString &metadataXml) const
         }
 
         summary.insert(QStringLiteral("pyramidStatistics"), pyramidObject);
-        summary.insert(QStringLiteral("ignoresHigherPyramidLevels"), hasIgnoredHigherLayers);
-        summary.insert(QStringLiteral("layer0ReadoutMode"), QStringLiteral("fullPlane"));
+        summary.insert(QStringLiteral("ignoresHigherPyramidLevels"), hasIgnoredHigherLayers && isLayer0PyramidLayer(selectedPyramidLayer_));
+        summary.insert(QStringLiteral("layer0ReadoutMode"), isLayer0PyramidLayer(selectedPyramidLayer_) ? QStringLiteral("fullPlane")
+                                                                                                          : QStringLiteral("autoPyramid"));
+        summary.insert(QStringLiteral("selectedPyramidScale"), selectedPyramidScale_);
+        summary.insert(QStringLiteral("selectedPyramidLayer"),
+                       QJsonObject{{QStringLiteral("minificationFactor"), static_cast<int>(selectedPyramidLayer_.minificationFactor)},
+                                   {QStringLiteral("pyramidLayerNo"), static_cast<int>(selectedPyramidLayer_.pyramidLayerNo)},
+                                   {QStringLiteral("isLayer0"), isLayer0PyramidLayer(selectedPyramidLayer_)}});
     } catch (const std::exception &) {
     }
 

@@ -67,10 +67,9 @@ private:
 
     void setBusy(bool busy);
     void queueFrameLoadForCurrentCoords();
-    void beginFrameLoad(int sequenceIndex);
+    void beginFrameLoad(const FrameCoordinateState &coordinates);
     void handleFrameLoadFinished();
     void finishQueuedFrameIfNeeded();
-    int resolveSequenceIndexForCurrentState(QString *errorMessage = nullptr) const;
     void rerenderCurrentFrame(bool updateAutoContrast);
     [[nodiscard]] static const DocumentInfo &emptyDocumentInfo();
 
@@ -81,7 +80,8 @@ private:
     RenderedFrame renderedFrame_;
     MetadataSection currentFrameMetadataSection_;
     int currentSequenceIndex_ = -1;
-    int queuedSequenceIndex_ = -1;
+    FrameCoordinateState queuedCoordinateState_;
+    bool hasQueuedFrameLoad_ = false;
     int requestCounter_ = 0;
     int channelSettingsRevision_ = 0;
     bool liveAutoEnabled_ = false;

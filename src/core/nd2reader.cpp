@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QMutexLocker>
 
+#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -116,6 +117,56 @@ int Nd2Reader::sequenceCount() const
     return info_.sequenceCount;
 }
 
+QString Nd2Reader::formatCoordinateSelection(const QVector<int> &coords) const
+{
+    struct CoordinateField
+    {
+        int priority = 0;
+        QString text;
+    };
+
+    auto loopPriority = [](const QString &type) {
+        if (type == QStringLiteral("TimeLoop")) {
+            return 0;
+        }
+        if (type == QStringLiteral("ZStackLoop")) {
+            return 1;
+        }
+        if (type == QStringLiteral("PhaseLoop")) {
+            return 2;
+        }
+        if (type == QStringLiteral("XYPosLoop")) {
+            return 3;
+        }
+        if (type == QStringLiteral("MultipointLoop")) {
+            return 4;
+        }
+        return 100;
+    };
+
+    QVector<CoordinateField> fields;
+    fields.reserve(std::min(coords.size(), info_.loops.size()));
+    for (int index = 0; index < coords.size() && index < info_.loops.size(); ++index) {
+        const LoopInfo &loop = info_.loops.at(index);
+        const QString label = loop.label.isEmpty() ? loop.type : loop.label;
+        fields.push_back({loopPriority(loop.type), QStringLiteral("%1=%2").arg(label, QString::number(coords.at(index)))});
+    }
+
+    std::sort(fields.begin(), fields.end(), [](const CoordinateField &lhs, const CoordinateField &rhs) {
+        if (lhs.priority != rhs.priority) {
+            return lhs.priority < rhs.priority;
+        }
+        return lhs.text < rhs.text;
+    });
+
+    QStringList parts;
+    parts.reserve(fields.size());
+    for (const CoordinateField &field : std::as_const(fields)) {
+        parts.push_back(field.text);
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
 bool Nd2Reader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex, QString *errorMessage) const
 {
     QMutexLocker locker(&mutex_);
@@ -146,6 +197,40 @@ bool Nd2Reader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex
     return true;
 }
 
+RawFrame Nd2Reader::readFrameForCoords(const QVector<int> &coords, QString *errorMessage) const
+{
+    int sequenceIndex = -1;
+    QString sequenceError;
+    if (!sequenceForCoords(coords, &sequenceIndex, &sequenceError)) {
+        if (errorMessage) {
+            const QString selection = formatCoordinateSelection(coords);
+            *errorMessage = selection.isEmpty()
+                                ? sequenceError
+                                : QStringLiteral("%1: %2").arg(selection,
+                                                               sequenceError.isEmpty()
+                                                                   ? QStringLiteral("The selected loop coordinate combination does not exist in this file.")
+                                                                   : sequenceError);
+        }
+        return {};
+    }
+
+    QString readError;
+    const RawFrame frame = readFrame(sequenceIndex, &readError);
+    if (frame.isValid()) {
+        return frame;
+    }
+
+    if (errorMessage) {
+        const QString selection = formatCoordinateSelection(coords);
+        *errorMessage = selection.isEmpty()
+                            ? readError
+                            : QStringLiteral("Failed to read ND2 plane at %1 (sequence %2): %3")
+                                  .arg(selection, QString::number(sequenceIndex + 1), readError);
+    }
+
+    return {};
+}
+
 RawFrame Nd2Reader::readFrame(int sequenceIndex, QString *errorMessage) const
 {
     QMutexLocker locker(&mutex_);
@@ -162,7 +247,7 @@ RawFrame Nd2Reader::readFrame(int sequenceIndex, QString *errorMessage) const
     const LIMRESULT result = Lim_FileGetImageData(handle_, static_cast<LIMUINT>(sequenceIndex), &picture);
     if (result != LIM_OK) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("The SDK failed to read frame %1 (error %2).").arg(sequenceIndex).arg(result);
+            *errorMessage = QStringLiteral("The Nikon ND2 SDK failed to read image data (error %1).").arg(result);
         }
         return frame;
     }
@@ -197,6 +282,36 @@ MetadataSection Nd2Reader::frameMetadataSection(int sequenceIndex, QString *erro
 {
     const QString rawText = frameMetadataText(sequenceIndex, errorMessage);
     return metadataSection(QStringLiteral("Frame Metadata"), parseJsonText(rawText), rawText);
+}
+
+MetadataSection Nd2Reader::frameMetadataForCoords(const QVector<int> &coords, QString *errorMessage) const
+{
+    int sequenceIndex = -1;
+    QString sequenceError;
+    if (!sequenceForCoords(coords, &sequenceIndex, &sequenceError)) {
+        if (errorMessage) {
+            const QString selection = formatCoordinateSelection(coords);
+            *errorMessage = selection.isEmpty()
+                                ? sequenceError
+                                : QStringLiteral("%1: %2").arg(selection,
+                                                               sequenceError.isEmpty()
+                                                                   ? QStringLiteral("The selected loop coordinate combination does not exist in this file.")
+                                                                   : sequenceError);
+        }
+        return {};
+    }
+
+    QString metadataError;
+    const MetadataSection section = frameMetadataSection(sequenceIndex, &metadataError);
+    if (!metadataError.isEmpty() && errorMessage) {
+        const QString selection = formatCoordinateSelection(coords);
+        *errorMessage = selection.isEmpty()
+                            ? metadataError
+                            : QStringLiteral("Failed to read ND2 metadata at %1 (sequence %2): %3")
+                                  .arg(selection, QString::number(sequenceIndex + 1), metadataError);
+    }
+
+    return section;
 }
 
 QJsonDocument Nd2Reader::parseJsonText(const QString &jsonText)

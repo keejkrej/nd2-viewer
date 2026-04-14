@@ -56,13 +56,12 @@ function Copy-IcuRuntime([string]$SourceDir, [string]$TargetDir) {
 }
 
 function Assert-RequiredRuntimeFiles([string]$TargetDir) {
-    $requiredFiles = @(
-        "Qt6Core.dll",
-        "icu.dll",
-        "icuin.dll",
-        "icuuc.dll"
-    )
+    $coreCandidates = @("Qt6Core.dll", "Qt6Cored.dll")
+    if (-not ($coreCandidates | Where-Object { Test-Path (Join-Path $TargetDir $_) } | Select-Object -First 1)) {
+        throw "msvc-windeployqt: required runtime files are missing from '$TargetDir': Qt6Core.dll or Qt6Cored.dll"
+    }
 
+    $requiredFiles = @("icu.dll", "icuin.dll", "icuuc.dll")
     $missing = @($requiredFiles | Where-Object { !(Test-Path (Join-Path $TargetDir $_)) })
     if ($missing.Count -gt 0) {
         throw "msvc-windeployqt: required runtime files are missing from '$TargetDir': $($missing -join ', ')"

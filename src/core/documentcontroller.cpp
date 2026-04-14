@@ -62,7 +62,8 @@ bool DocumentController::openFile(const QString &path)
     coordinateState_.values.fill(0, reader_->documentInfo().loops.size());
     channelSettings_ = FrameRenderer::defaultChannelSettings(reader_->documentInfo());
     currentSequenceIndex_ = -1;
-    queuedSequenceIndex_ = -1;
+    queuedCoordinateState_ = {};
+    hasQueuedFrameLoad_ = false;
     renderedFrame_ = {};
     currentRawFrame_ = {};
     currentFrameMetadataSection_ = {};
@@ -96,7 +97,8 @@ void DocumentController::closeFile()
     renderedFrame_ = {};
     currentFrameMetadataSection_ = {};
     currentSequenceIndex_ = -1;
-    queuedSequenceIndex_ = -1;
+    queuedCoordinateState_ = {};
+    hasQueuedFrameLoad_ = false;
     channelSettingsRevision_ = 0;
     liveAutoEnabled_ = false;
     pendingInitialAutoContrast_ = false;
@@ -278,20 +280,19 @@ void DocumentController::setBusy(bool busy)
 
 void DocumentController::queueFrameLoadForCurrentCoords()
 {
-    QString errorMessage;
-    const int sequenceIndex = resolveSequenceIndexForCurrentState(&errorMessage);
-    if (sequenceIndex < 0) {
-        emit errorOccurred(errorMessage);
+    if (!reader_ || !reader_->isOpen()) {
+        emit errorOccurred(QStringLiteral("Open an ND2 or CZI file first."));
         return;
     }
 
-    beginFrameLoad(sequenceIndex);
+    beginFrameLoad(coordinateState_);
 }
 
-void DocumentController::beginFrameLoad(int sequenceIndex)
+void DocumentController::beginFrameLoad(const FrameCoordinateState &coordinates)
 {
     if (frameWatcher_.isRunning()) {
-        queuedSequenceIndex_ = sequenceIndex;
+        queuedCoordinateState_ = coordinates;
+        hasQueuedFrameLoad_ = true;
         return;
     }
 
@@ -300,25 +301,24 @@ void DocumentController::beginFrameLoad(int sequenceIndex)
     const int settingsRevision = channelSettingsRevision_;
     const bool applyInitialAutoContrast = pendingInitialAutoContrast_;
     const bool liveAutoEnabled = liveAutoEnabled_;
-    const FrameCoordinateState coordinates = coordinateState_;
     const QVector<ChannelRenderSettings> channelSettings = channelSettings_;
-    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, settingsRevision, sequenceIndex, coordinates, channelSettings,
+    frameWatcher_.setFuture(QtConcurrent::run([this, requestId, settingsRevision, coordinates, channelSettings,
                                                applyInitialAutoContrast, liveAutoEnabled]() {
         FrameLoadResult result;
         result.requestId = requestId;
         result.settingsRevision = settingsRevision;
-        result.sequenceIndex = sequenceIndex;
 
         QString frameError;
-        RawFrame frame = reader_->readFrame(sequenceIndex, &frameError);
+        RawFrame frame = reader_->readFrameForCoords(coordinates.values, &frameError);
         if (!frame.isValid()) {
             result.error = frameError;
             return result;
         }
 
         QString metadataError;
-        result.metadataSection = reader_->frameMetadataSection(sequenceIndex, &metadataError);
+        result.metadataSection = reader_->frameMetadataForCoords(coordinates.values, &metadataError);
         result.frame = frame;
+        result.sequenceIndex = frame.sequenceIndex;
         result.channelSettings = channelSettings;
         result.channelSettingsChanged =
             (applyInitialAutoContrast || liveAutoEnabled) ? applyAutoContrastAllChannels(result.frame, result.channelSettings) : false;
@@ -348,7 +348,7 @@ void DocumentController::handleFrameLoadFinished()
         return;
     }
 
-    currentSequenceIndex_ = result.sequenceIndex;
+    currentSequenceIndex_ = result.frame.sequenceIndex;
     currentRawFrame_ = result.frame;
     currentFrameMetadataSection_ = result.metadataSection;
     pendingInitialAutoContrast_ = false;
@@ -371,36 +371,17 @@ void DocumentController::handleFrameLoadFinished()
 
 void DocumentController::finishQueuedFrameIfNeeded()
 {
-    if (queuedSequenceIndex_ >= 0 && queuedSequenceIndex_ != currentSequenceIndex_) {
-        const int nextSequence = queuedSequenceIndex_;
-        queuedSequenceIndex_ = -1;
-        beginFrameLoad(nextSequence);
+    if (hasQueuedFrameLoad_ && queuedCoordinateState_.values != renderedFrame_.coordinates.values) {
+        const FrameCoordinateState nextCoordinates = queuedCoordinateState_;
+        queuedCoordinateState_ = {};
+        hasQueuedFrameLoad_ = false;
+        beginFrameLoad(nextCoordinates);
         return;
     }
 
-    queuedSequenceIndex_ = -1;
+    queuedCoordinateState_ = {};
+    hasQueuedFrameLoad_ = false;
     setBusy(false);
-}
-
-int DocumentController::resolveSequenceIndexForCurrentState(QString *errorMessage) const
-{
-    if (!reader_ || !reader_->isOpen()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Open an ND2 or CZI file first.");
-        }
-        return -1;
-    }
-
-    if (coordinateState_.values.isEmpty()) {
-        return 0;
-    }
-
-    int sequenceIndex = -1;
-    if (!reader_->sequenceForCoords(coordinateState_.values, &sequenceIndex, errorMessage)) {
-        return -1;
-    }
-
-    return sequenceIndex;
 }
 
 void DocumentController::rerenderCurrentFrame(bool updateAutoContrast)

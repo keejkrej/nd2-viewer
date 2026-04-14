@@ -27,11 +27,15 @@ public:
 
     bool sequenceForCoords(const QVector<int> &coords, int *sequenceIndex, QString *errorMessage = nullptr) const override;
 
-    RawFrame readFrame(int sequenceIndex, QString *errorMessage = nullptr) const override;
-    MetadataSection frameMetadataSection(int sequenceIndex, QString *errorMessage = nullptr) const override;
+    RawFrame readFrameForCoords(const QVector<int> &coords, QString *errorMessage = nullptr) const override;
+    MetadataSection frameMetadataForCoords(const QVector<int> &coords, QString *errorMessage = nullptr) const override;
 
     static QString dimensionName(libCZI::DimensionIndex dimension);
     static QString dimensionCoordinateSummary(const libCZI::IDimCoordinate &coordinate);
+
+protected:
+    RawFrame readFrame(int sequenceIndex, QString *errorMessage = nullptr) const override;
+    MetadataSection frameMetadataSection(int sequenceIndex, QString *errorMessage = nullptr) const override;
 
 private:
     struct LoopBinding
@@ -58,6 +62,7 @@ private:
     static bool isSupportedPixelType(libCZI::PixelType pixelType);
     static int bitsPerComponentFor(libCZI::PixelType pixelType);
     static QString pixelDataTypeFor(libCZI::PixelType pixelType);
+    QString formatCoordinateSelection(const QVector<int> &coords) const;
 
     bool loadDocumentInfo(QString *errorMessage);
     bool validateSubBlockInfo(const libCZI::SubBlockInfo &subBlockInfo, QString *errorMessage) const;

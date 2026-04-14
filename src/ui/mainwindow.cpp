@@ -2608,21 +2608,12 @@ QImage MainWindow::renderMovieExportFrameImage(int timeValue, QString *errorMess
     }
     coordinates[movieExportSettings_.timeLoopIndex] = timeValue;
 
-    int sequenceIndex = -1;
-    if (!reader->sequenceForCoords(coordinates, &sequenceIndex, &readerError)) {
-        if (errorMessage) {
-            *errorMessage = readerError;
-        }
-        reader->close();
-        return {};
-    }
-
-    RawFrame rawFrame = reader->readFrame(sequenceIndex, &readerError);
+    RawFrame rawFrame = reader->readFrameForCoords(coordinates, &readerError);
     reader->close();
     if (!rawFrame.isValid()) {
         if (errorMessage) {
             *errorMessage = readerError.isEmpty()
-                ? tr("The file reader could not read frame %1.").arg(sequenceIndex + 1)
+                ? tr("The file reader could not read the requested loop coordinates.")
                 : readerError;
         }
         return {};

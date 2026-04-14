@@ -369,6 +369,65 @@ QString CziReader::pixelDataTypeFor(libCZI::PixelType pixelType)
     return pixelType == libCZI::PixelType::Gray32Float ? QStringLiteral("float") : QStringLiteral("unsigned");
 }
 
+QString CziReader::formatCoordinateSelection(const QVector<int> &coords) const
+{
+    struct CoordinateField
+    {
+        int priority = 0;
+        QString text;
+    };
+
+    auto loopPriority = [](const QString &type) {
+        if (type == QStringLiteral("TimeLoop")) {
+            return 0;
+        }
+        if (type == QStringLiteral("ZStackLoop")) {
+            return 1;
+        }
+        if (type == QStringLiteral("PhaseLoop")) {
+            return 2;
+        }
+        if (type == QStringLiteral("SceneLoop")) {
+            return 3;
+        }
+        if (type == QStringLiteral("RotationLoop")) {
+            return 4;
+        }
+        if (type == QStringLiteral("IlluminationLoop")) {
+            return 5;
+        }
+        if (type == QStringLiteral("ViewLoop")) {
+            return 6;
+        }
+        if (type == QStringLiteral("BlockLoop")) {
+            return 7;
+        }
+        return 100;
+    };
+
+    QVector<CoordinateField> fields;
+    fields.reserve(std::min(coords.size(), info_.loops.size()));
+    for (int index = 0; index < coords.size() && index < info_.loops.size(); ++index) {
+        const LoopInfo &loop = info_.loops.at(index);
+        const QString label = loop.label.isEmpty() ? loop.type : loop.label;
+        fields.push_back({loopPriority(loop.type), QStringLiteral("%1=%2").arg(label, QString::number(coords.at(index)))});
+    }
+
+    std::sort(fields.begin(), fields.end(), [](const CoordinateField &lhs, const CoordinateField &rhs) {
+        if (lhs.priority != rhs.priority) {
+            return lhs.priority < rhs.priority;
+        }
+        return lhs.text < rhs.text;
+    });
+
+    QStringList parts;
+    parts.reserve(fields.size());
+    for (const CoordinateField &field : std::as_const(fields)) {
+        parts.push_back(field.text);
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
 bool CziReader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex, QString *errorMessage) const
 {
     QMutexLocker locker(&mutex_);
@@ -391,6 +450,79 @@ bool CziReader::sequenceForCoords(const QVector<int> &coords, int *sequenceIndex
         *sequenceIndex = index;
     }
     return true;
+}
+
+RawFrame CziReader::readFrameForCoords(const QVector<int> &coords, QString *errorMessage) const
+{
+    int sequenceIndex = -1;
+    QString sequenceError;
+    if (!sequenceForCoords(coords, &sequenceIndex, &sequenceError)) {
+        if (errorMessage) {
+            const QString selection = formatCoordinateSelection(coords);
+            *errorMessage = selection.isEmpty()
+                                ? sequenceError
+                                : QStringLiteral("%1: %2").arg(selection,
+                                                               sequenceError.isEmpty()
+                                                                   ? QStringLiteral("The selected loop coordinate combination does not exist in this file.")
+                                                                   : sequenceError);
+        }
+        return {};
+    }
+
+    QString readError;
+    const RawFrame frame = readFrame(sequenceIndex, &readError);
+    if (frame.isValid()) {
+        return frame;
+    }
+
+    if (errorMessage) {
+        const QString selection = formatCoordinateSelection(coords);
+        QString detail = readError;
+
+        if (selection.isEmpty()) {
+            *errorMessage = detail;
+        } else if (detail.isEmpty()) {
+            *errorMessage = QStringLiteral("Failed to read CZI plane at %1 (sequence %2).")
+                                .arg(selection, QString::number(sequenceIndex + 1));
+        } else {
+            *errorMessage = QStringLiteral("Failed to read CZI plane at %1 (sequence %2): %3")
+                                .arg(selection, QString::number(sequenceIndex + 1), detail);
+        }
+    }
+
+    return {};
+}
+
+MetadataSection CziReader::frameMetadataForCoords(const QVector<int> &coords, QString *errorMessage) const
+{
+    int sequenceIndex = -1;
+    QString sequenceError;
+    if (!sequenceForCoords(coords, &sequenceIndex, &sequenceError)) {
+        if (errorMessage) {
+            const QString selection = formatCoordinateSelection(coords);
+            *errorMessage = selection.isEmpty()
+                                ? sequenceError
+                                : QStringLiteral("%1: %2").arg(selection,
+                                                               sequenceError.isEmpty()
+                                                                   ? QStringLiteral("The selected loop coordinate combination does not exist in this file.")
+                                                                   : sequenceError);
+        }
+        return {};
+    }
+
+    QString metadataError;
+    const MetadataSection section = frameMetadataSection(sequenceIndex, &metadataError);
+    if (!metadataError.isEmpty() && errorMessage) {
+        const QString selection = formatCoordinateSelection(coords);
+        QString detail = metadataError;
+
+        *errorMessage = selection.isEmpty()
+                            ? detail
+                            : QStringLiteral("Failed to read CZI metadata at %1 (sequence %2): %3")
+                                  .arg(selection, QString::number(sequenceIndex + 1), detail);
+    }
+
+    return section;
 }
 
 const CziReader::SequencePlane *CziReader::sequencePlaneForIndex(int sequenceIndex, QString *errorMessage) const
@@ -621,9 +753,7 @@ RawFrame CziReader::readFrame(int sequenceIndex, QString *errorMessage) const
             }
         } catch (const std::exception &exception) {
             if (errorMessage) {
-                *errorMessage = QStringLiteral("libCZI failed to decode frame %1: %2")
-                                    .arg(sequenceIndex + 1)
-                                    .arg(QString::fromUtf8(exception.what()));
+                *errorMessage = QString::fromUtf8(exception.what());
             }
             return {};
         }
@@ -694,7 +824,7 @@ MetadataSection CziReader::frameMetadataSection(int sequenceIndex, QString *erro
             }
         } catch (const std::exception &exception) {
             if (errorMessage) {
-                *errorMessage = QStringLiteral("libCZI failed to read frame metadata: %1").arg(QString::fromUtf8(exception.what()));
+                *errorMessage = QString::fromUtf8(exception.what());
             }
             return {};
         }

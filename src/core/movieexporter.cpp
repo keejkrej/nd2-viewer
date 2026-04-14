@@ -253,15 +253,10 @@ QImage MovieExportWorker::renderFrameImage(int timeValue, QString *errorMessage)
     QVector<int> coordinates = settings_.fixedCoordinates;
     coordinates[settings_.timeLoopIndex] = timeValue;
 
-    int sequenceIndex = -1;
-    if (!reader_->sequenceForCoords(coordinates, &sequenceIndex, errorMessage)) {
-        return {};
-    }
-
-    RawFrame rawFrame = reader_->readFrame(sequenceIndex, errorMessage);
+    RawFrame rawFrame = reader_->readFrameForCoords(coordinates, errorMessage);
     if (!rawFrame.isValid()) {
         if (errorMessage && errorMessage->isEmpty()) {
-            *errorMessage = tr("The file reader could not read frame %1.").arg(sequenceIndex + 1);
+            *errorMessage = tr("The file reader could not read the requested loop coordinates.");
         }
         return {};
     }

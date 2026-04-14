@@ -100,19 +100,13 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
     }
     baseCoordinates[zLoopIndex] = 0;
 
-    int firstSequenceIndex = -1;
-    if (!reader->sequenceForCoords(baseCoordinates, &firstSequenceIndex, &readerError)) {
-        result.error = readerError;
-        return result;
-    }
-
-    const RawFrame firstFrame = reader->readFrame(firstSequenceIndex, &readerError);
+    const RawFrame firstFrame = reader->readFrameForCoords(baseCoordinates, &readerError);
     if (!firstFrame.isValid()) {
         result.error = readerError;
         return result;
     }
     qInfo("3D volume first frame: sequence=%d width=%d height=%d components=%d bits=%d type=%s",
-          firstSequenceIndex,
+          firstFrame.sequenceIndex,
           firstFrame.width,
           firstFrame.height,
           firstFrame.components,
@@ -149,13 +143,7 @@ VolumeLoadResult VolumeLoader::load(const QString &path,
     for (int z = 0; z < result.volume.depth; ++z) {
         result.volume.fixedCoordinates.values[zLoopIndex] = z;
 
-        int sequenceIndex = -1;
-        if (!reader->sequenceForCoords(result.volume.fixedCoordinates.values, &sequenceIndex, &readerError)) {
-            result.error = readerError;
-            return result;
-        }
-
-        const RawFrame frame = reader->readFrame(sequenceIndex, &readerError);
+        const RawFrame frame = reader->readFrameForCoords(result.volume.fixedCoordinates.values, &readerError);
         if (!frame.isValid()) {
             result.error = readerError;
             return result;

@@ -22,7 +22,10 @@ public:
     [[nodiscard]] int sequenceCount() const override;
 
     bool sequenceForCoords(const QVector<int> &coords, int *sequenceIndex, QString *errorMessage = nullptr) const override;
+    RawFrame readFrameForCoords(const QVector<int> &coords, QString *errorMessage = nullptr) const override;
+    MetadataSection frameMetadataForCoords(const QVector<int> &coords, QString *errorMessage = nullptr) const override;
 
+protected:
     RawFrame readFrame(int sequenceIndex, QString *errorMessage = nullptr) const override;
     MetadataSection frameMetadataSection(int sequenceIndex, QString *errorMessage = nullptr) const override;
 
@@ -33,6 +36,7 @@ private:
     static int firstIntValue(const QJsonObject &object, std::initializer_list<const char *> keys, int fallback = 0);
     static QString firstStringValue(const QJsonObject &object, std::initializer_list<const char *> keys, const QString &fallback = {});
     static QString loopLabel(const QString &type, int index);
+    QString formatCoordinateSelection(const QVector<int> &coords) const;
     static DocumentInfo buildFallbackInfo(const QString &path);
     static MetadataSection metadataSection(const QString &title, const QJsonDocument &document, const QString &rawText = {});
 

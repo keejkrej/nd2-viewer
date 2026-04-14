@@ -6,7 +6,7 @@ nd2-viewer is not a qt6 desktop viewer for nd2 but ND^2 (n-dimensional data).
 
 - Open `.nd2` files with Nikon's official SDK
 - Open supported `.czi` files with vendored `libCZI`
-- Navigate experiment loops dynamically (time, z, XY, and other SDK-exposed loops)
+- Navigate experiment loops dynamically, including time, z, scene, rotation, illumination, phase, view, block, XY, and other SDK-exposed loops
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
 - Use percentile-based per-channel live auto contrast with a histogram tuning dialog
@@ -226,7 +226,10 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.
-- The CZI reader now loads layer-0 image data from standard, tiled, mosaic, and pyramid CZI files, but it still ignores higher pyramid levels and does not do ROI-aware virtualized loading.
+- The CZI reader now composes standard, sparse, tiled, mosaic, and pyramid CZI planes through `libCZI`, including shared higher pyramid levels when they are selected for normal viewing.
+- CZI phase/view/block loop parsing is not new to `0.1.6`; those dimensions were already exposed through the dynamic loop model before `v0.1.5`.
+- The current CZI reader still does not do ROI-aware virtualized loading; it composes the selected plane or pyramid level into a full frame for viewing.
+- In 3D, CZI pyramid-backed volumes now keep the correct physical XY spacing for the selected pyramid layer, so downsampled pyramid reads do not exaggerate Z thickness.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - The integrated `3D` mode is enabled only for files with a usable z-loop and reuses the current shared viewer state.

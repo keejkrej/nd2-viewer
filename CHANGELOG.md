@@ -7,6 +7,13 @@ All notable changes to `nd2-viewer` are documented in this file.
 ### Changed
 - Bumped the project version to `0.1.6`.
 
+### Fixed
+- Reworked CZI plane loading so the reader can compose sparse, tiled, mosaic, and pyramidal CZI planes instead of failing on irregular layer-0 layouts.
+- Fixed CZI 3D voxel spacing when the reader selects a downsampled pyramid layer, so the rendered volume no longer appears stretched along Z.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` to describe the `0.1.6` CZI reader behavior, including sparse/pyramid support and the current pyramid-spacing fix.
+
 ## [0.1.5] - 2026-04-10
 
 ### Changed

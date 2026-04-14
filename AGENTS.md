@@ -82,10 +82,13 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - Navigator sliders are intentionally deferred now: moving a slider updates the paired spin box immediately, but frame loads commit only when the slider interaction ends.
 - Coordinate-driven frame loads now prepare metadata, auto-contrast, and rendered images off the UI thread before applying the result.
 - Spin boxes still commit immediately for precise stepping.
+- The CZI reader now composes standard, sparse, tiled, mosaic, and pyramid planes, and it may choose a shared higher pyramid level for normal viewing when that keeps large documents responsive.
+- CZI `Phase`, `View`, and `Block` dimensions are part of the existing dynamic loop model already present before `v0.1.6`; the `0.1.6` CZI work was about irregular plane composition and pyramid handling, not adding those loops.
 - `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
 - The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
 - The integrated `3D` mode is available for files with a usable z-loop and reuses the main viewer instead of opening a separate window.
 - The 3D viewer loads the full z-stack in the background, keeps its own channel colors and contrast state, supports `Balanced`, `Volume`, and `Detail` render modes, and now always uses the VTK backend.
+- CZI pyramid-backed 3D volumes now inherit the selected pyramid layer's XY voxel spacing, so downsampled pyramid reads should not look stretched along Z.
 - `Balanced`, `Volume`, and `Detail` now share the same Y-axis orientation instead of rendering upside-down copies of each other.
 - The shared view action now shows `Fit` in 2D and `Reset` in 3D.
 - 2D `Fit` is a one-shot action and no longer behaves like a persistent auto-fit mode during playback or frame changes.
@@ -103,6 +106,8 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - On this machine, the default validation path is still the MSVC scripts unless the task is specifically about macOS packaging.
 - For 3D viewer work, manually verify:
   - the `3D` mode toggle stays disabled for 2D-only files and enables for ND2/CZI z-stacks
+  - sparse, tiled, mosaic, and pyramid CZI planes still open and render instead of failing at load time
+  - downsampled CZI pyramid layers do not make the 3D render look artificially stretched along Z
   - `Balanced`, `Volume`, and `Detail` align on the same structures instead of showing vertically mirrored copies
   - `Fit` in 2D and `Reset` in 3D behave predictably
   - orbit, zoom, and render-mode switching behave predictably

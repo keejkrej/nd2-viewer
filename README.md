@@ -233,6 +233,8 @@ If CMake does not already know where VTK is installed on Windows, build/install 
 - The current CZI reader still does not do ROI-aware virtualized loading; it composes the selected plane or pyramid level into a full frame for viewing.
 - In 3D, CZI pyramid-backed volumes now keep the correct physical XY spacing for the selected pyramid layer, so downsampled pyramid reads do not exaggerate Z thickness.
 - Plane read failures are now reported with loop coordinates when available, for example `Time=51, Z=9, Phase=0`, instead of only a global frame number.
+- Movie export now drives the visible viewer in both 2D and 3D. During export, the app temporarily switches readers into a tolerant policy that substitutes black data for failed ND2/CZI reads instead of aborting immediately.
+- Export-time read substitutions do not show modal read-error popups. Instead, the export continues, the affected frame or slice is rendered black, and a `.warnings.txt` sidecar report is written next to the MP4 when substitutions occurred.
 - Per-channel `Live auto` now uses configurable min/max percentiles instead of raw min/max, which makes it less sensitive to isolated bright artifacts.
 - The histogram tuning dialog previews numeric percentile edits immediately, while dragged threshold lines commit the image preview on mouse release.
 - The integrated `3D` mode is enabled only for files with a usable z-loop and reuses the current shared viewer state.

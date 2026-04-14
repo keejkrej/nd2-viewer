@@ -2,6 +2,15 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.7] - 2026-04-14
+
+### Changed
+- Bumped the project version to `0.1.7`.
+
+### Fixed
+- Hardened Windows Qt deployment so release builds and packaged installs now bundle the full ICU runtime set (`icu.dll`, `icuin.dll`, `icuuc.dll`) instead of relying on whatever `windeployqt` happens to copy from the local machine.
+- Added a package-time validation check that refuses to build a Windows installer or ZIP when the release runtime payload is missing the required ICU DLLs.
+
 ## [0.1.6] - 2026-04-13
 
 ### Changed

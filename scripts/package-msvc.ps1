@@ -15,6 +15,12 @@ $outputPath = Join-Path $repoRoot $OutputDir
 $cpackConfig = Join-Path $buildPath "CPackConfig.cmake"
 $exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
 $makensisPath = $null
+$requiredRuntimeFiles = @(
+    "Qt6Core.dll",
+    "icu.dll",
+    "icuin.dll",
+    "icuuc.dll"
+)
 
 if (!(Test-Path $buildPath)) {
     throw "Release build directory '$buildPath' was not found. Run .\scripts\build-msvc.ps1 -Configuration Release first."
@@ -22,6 +28,11 @@ if (!(Test-Path $buildPath)) {
 
 if (!(Test-Path $exePath)) {
     throw "Release executable '$exePath' was not found. Run .\scripts\build-msvc.ps1 -Configuration Release first."
+}
+
+$missingRuntimeFiles = @($requiredRuntimeFiles | Where-Object { !(Test-Path (Join-Path (Split-Path -Parent $exePath) $_)) })
+if ($missingRuntimeFiles.Count -gt 0) {
+    throw "Release runtime payload is incomplete. Missing files in '$($buildPath)\bin': $($missingRuntimeFiles -join ', '). Run .\scripts\build-msvc.ps1 -Configuration Release again before packaging."
 }
 
 if (!(Test-Path $cpackConfig)) {

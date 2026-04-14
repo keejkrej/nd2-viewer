@@ -59,9 +59,10 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 
 - `scripts/package-msvc.ps1` defaults to an `NSIS` installer and writes it into `dist`.
 - NSIS must be installed for the default installer flow to work.
-- A successful recent package output should now use the `0.1.6` version string, for example `dist\nd2-viewer-0.1.6-win64.exe`.
+- A successful recent package output should now use the `0.1.7` version string, for example `dist\nd2-viewer-0.1.7-win64.exe`.
 - On Windows, the default install prefix is now per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
 - `scripts/build-msvc.ps1` now runs `windeployqt` after a successful build so the build tree is directly runnable.
+- The Windows deploy/package flow now expects the release payload to contain `icu.dll`, `icuin.dll`, and `icuuc.dll` alongside `Qt6Core.dll`; packaging should fail if any of them are missing.
 - `scripts/build-macos.sh` now runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable.
 - CPack packages the release runtime payload from `build-msvc-release\bin`, not the debug tree.
 - `scripts/package-msvc.ps1` is package-only now. Run `.\scripts\build-msvc.ps1 -Configuration Release` first.

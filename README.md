@@ -200,6 +200,7 @@ Installer notes:
 - On Windows, the default install location is per-user under `%LOCALAPPDATA%\Programs\nd2-viewer`, not `Program Files`.
 - `makensis.exe` must be on `PATH` for the NSIS package to be created.
 - If you want a portable archive instead, run `.\scripts\package-msvc.ps1 -Generator ZIP`.
+- Windows release deployments now bundle the ICU runtime set required by `Qt6Core.dll`, and packaging will stop with an error if `icu.dll`, `icuin.dll`, or `icuuc.dll` are missing from the release payload.
 
 ### Manual MSVC build
 

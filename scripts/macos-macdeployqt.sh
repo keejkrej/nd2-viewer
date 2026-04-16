@@ -25,7 +25,10 @@ qt_lib_dir="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
 qt_prefix="$(cd "$(dirname "$(dirname "$(dirname "${qt6_dir}")")")" && pwd)"
 macdeployqt="${qt_prefix}/bin/macdeployqt"
 if [[ ! -x "${macdeployqt}" ]]; then
-  echo "macos-macdeployqt: macdeployqt not found at ${macdeployqt}" >&2
+  macdeployqt="${qt_prefix}/tools/Qt6/bin/macdeployqt"
+fi
+if [[ ! -x "${macdeployqt}" ]]; then
+  echo "macos-macdeployqt: macdeployqt not found at ${qt_prefix}/bin or ${qt_prefix}/tools/Qt6/bin" >&2
   exit 1
 fi
 

@@ -34,47 +34,15 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 option(ND2VIEWER_USE_SHARED_SDK "Link against the Nikon shared SDK." ON)
 if(APPLE)
   set(_nd2sdk_root_default "$ENV{HOME}/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8")
-  set(_qt6_dir_default "$ENV{HOME}/Qt/6.11.0/macos/lib/cmake/Qt6")
-  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(_vtk_dir_install_default "$ENV{HOME}/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
-    set(_vtk_dir_build_default "$ENV{HOME}/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
-  else()
-    set(_vtk_dir_install_default "$ENV{HOME}/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
-    set(_vtk_dir_build_default "$ENV{HOME}/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
-  endif()
-  if(EXISTS "${_vtk_dir_install_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_install_default}/VTKConfig.cmake")
-    set(_vtk_dir_default "${_vtk_dir_install_default}")
-  elseif(EXISTS "${_vtk_dir_build_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_build_default}/VTKConfig.cmake")
-    set(_vtk_dir_default "${_vtk_dir_build_default}")
-  else()
-    set(_vtk_dir_default "")
-  endif()
 elseif(WIN32)
   set(_nd2sdk_root_default "C:/Program Files/nd2readsdk-shared")
-  set(_qt6_dir_default "")
-  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(_vtk_dir_install_default "$ENV{USERPROFILE}/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
-    set(_vtk_dir_build_default "$ENV{USERPROFILE}/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5")
-  else()
-    set(_vtk_dir_install_default "$ENV{USERPROFILE}/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
-    set(_vtk_dir_build_default "$ENV{USERPROFILE}/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5")
-  endif()
-  if(EXISTS "${_vtk_dir_install_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_install_default}/VTKConfig.cmake")
-    set(_vtk_dir_default "${_vtk_dir_install_default}")
-  elseif(EXISTS "${_vtk_dir_build_default}/vtk-config.cmake" OR EXISTS "${_vtk_dir_build_default}/VTKConfig.cmake")
-    set(_vtk_dir_default "${_vtk_dir_build_default}")
-  else()
-    set(_vtk_dir_default "")
-  endif()
 else()
   set(_nd2sdk_root_default "")
-  set(_qt6_dir_default "")
-  set(_vtk_dir_default "")
 endif()
 
 set(ND2SDK_ROOT "${_nd2sdk_root_default}" CACHE PATH "Path to the ND2 SDK root.")
-set(Qt6_DIR "${_qt6_dir_default}" CACHE PATH "Path to Qt6Config.cmake, e.g. C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6")
-set(VTK_DIR "${_vtk_dir_default}" CACHE PATH "Path to VTKConfig.cmake. Override if your VTK install is not auto-detected.")
+set(Qt6_DIR "" CACHE PATH "Path to Qt6Config.cmake (optional; vcpkg toolchain usually supplies Qt).")
+set(VTK_DIR "" CACHE PATH "Path to VTKConfig.cmake (optional; vcpkg toolchain usually supplies VTK).")
 
 if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
@@ -95,16 +63,11 @@ find_package(VTK CONFIG REQUIRED COMPONENTS
   RenderingVolumeOpenGL2
 )
 if((WIN32 OR APPLE) AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-  if(NOT VTK_DIR OR NOT EXISTS "${VTK_DIR}/VTK-targets-debug.cmake")
-    if(WIN32)
-      set(_nd2viewer_debug_vtk_hint ".\\scripts\\build-vtk-msvc.ps1 -Configuration Debug")
-    else()
-      set(_nd2viewer_debug_vtk_hint "./scripts/build-vtk-macos.sh --configuration Debug")
-    endif()
+  if(VTK_DIR AND NOT EXISTS "${VTK_DIR}/VTK-targets-debug.cmake")
     message(FATAL_ERROR
       "Debug builds require a VTK package with debug targets. Resolved VTK_DIR='${VTK_DIR}', "
       "but '${VTK_DIR}/VTK-targets-debug.cmake' was not found. "
-      "Build debug VTK first with ${_nd2viewer_debug_vtk_hint}, or override VTK_DIR to a debug-capable package."
+      "Install dependencies with the vcpkg triplet that includes debug libraries (e.g. x64-windows), or override VTK_DIR."
     )
   endif()
 endif()
@@ -119,15 +82,7 @@ set(ND2VIEWER_VTK_LIBS
   VTK::RenderingVolumeOpenGL2
 )
 
-set(LIBCZI_DO_NOT_SET_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_CZICMD OFF CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_LIBCZIAPI OFF CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_CURL_BASED_STREAM OFF CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_AZURESDK_BASED_STREAM OFF CACHE BOOL "" FORCE)
-set(LIBCZI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(LIBCZI_BUILD_DYNLIB ON CACHE BOOL "" FORCE)
-add_subdirectory(third_party/libczi EXCLUDE_FROM_ALL)
+find_package(libCZI CONFIG REQUIRED)
 
 set(_nd2viewer_target_type)
 if(WIN32)
@@ -276,7 +231,7 @@ target_link_libraries(nd2-viewer
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Qt6::Widgets
-    libCZI
+    libczi::libCZI
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
     ${ND2VIEWER_VTK_LIBS}
@@ -318,15 +273,15 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
 
 endif()
 
-if(TARGET libCZI)
+if(TARGET libczi::libCZI)
   if(WIN32)
     add_custom_command(TARGET nd2-viewer POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "$<TARGET_FILE:libCZI>"
+        "$<TARGET_FILE:libczi::libCZI>"
         "$<TARGET_FILE_DIR:nd2-viewer>"
       COMMENT "Copying libCZI runtime"
     )
-    install(FILES "$<TARGET_FILE:libCZI>"
+    install(FILES "$<TARGET_FILE:libczi::libCZI>"
       DESTINATION "."
       COMPONENT Runtime
     )
@@ -334,7 +289,7 @@ if(TARGET libCZI)
     add_custom_command(TARGET nd2-viewer POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "$<TARGET_FILE:libCZI>"
+        "$<TARGET_FILE:libczi::libCZI>"
         "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
       COMMENT "Copying libCZI runtime"
     )

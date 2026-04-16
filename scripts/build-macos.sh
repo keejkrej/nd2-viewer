@@ -2,9 +2,15 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${script_dir}/vcpkg-common.sh"
+
 configuration=""
 build_dir=""
-qt6_dir="${Qt6_DIR:-$HOME/Qt/6.11.0/macos/lib/cmake/Qt6}"
+vcpkg_root="${VCPKG_ROOT:-}"
+vcpkg_triplet=""
+qt6_dir=""
 vtk_dir="${VTK_DIR:-}"
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
@@ -12,11 +18,15 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/build-macos.sh --configuration <Debug|Release> [options]
 
+Run ./scripts/install-vcpkg-deps.sh first (or after vcpkg.json changes) to build Qt/VTK/libczi.
+
 Options:
   --configuration <type>  Required. Supported: Debug, Release
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos-debug or build-macos-release
-  --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
-  --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5, fallback ~/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5
+  --vcpkg-root <path>     vcpkg clone root (directory containing scripts/buildsystems/vcpkg.cmake). Default: VCPKG_ROOT or vcpkg on PATH
+  --vcpkg-triplet <t>     e.g. arm64-osx or x64-osx. Default: from machine arch
+  --qt6-dir <path>        Optional. Path to Qt6Config.cmake; if set, skips vcpkg for Qt/VTK/libczi (advanced)
+  --vtk-dir <path>        Optional. Only used with --qt6-dir (non-vcpkg VTK)
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
@@ -53,22 +63,6 @@ reset_build_dir_for_generator_switch() {
   rm -rf "${candidate_build_dir}"
 }
 
-migrate_legacy_release_vtk_tree() {
-  local root_name="$1"
-  local legacy_path="$HOME/${root_name}/vtk-9.5.2-qt611"
-  local release_path="$HOME/${root_name}/vtk-9.5.2-qt611-release"
-  if [[ -e "${legacy_path}" && ! -e "${release_path}" ]]; then
-    echo "Migrating existing release VTK path '${legacy_path}' -> '${release_path}'"
-    mv "${legacy_path}" "${release_path}"
-  elif [[ -e "${legacy_path}" && -e "${release_path}" ]]; then
-    echo "Both legacy and new release VTK paths exist:" >&2
-    echo "  ${legacy_path}" >&2
-    echo "  ${release_path}" >&2
-    echo "Resolve the duplicate manually before continuing." >&2
-    exit 1
-  fi
-}
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --configuration)
@@ -77,6 +71,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-dir)
       build_dir="$2"
+      shift 2
+      ;;
+    --vcpkg-root)
+      vcpkg_root="$2"
+      shift 2
+      ;;
+    --vcpkg-triplet)
+      vcpkg_triplet="$2"
       shift 2
       ;;
     --qt6-dir)
@@ -125,36 +127,38 @@ if [[ -z "${build_dir}" ]]; then
   build_dir="build-macos-${build_suffix}"
 fi
 
-if [[ "${configuration}" == "Release" ]]; then
-  migrate_legacy_release_vtk_tree "opt"
-  migrate_legacy_release_vtk_tree "build"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+if [[ -z "${vcpkg_root}" ]]; then
+  vcpkg_root="$(resolve_vcpkg_root "")"
+else
+  require_vcpkg_root "${vcpkg_root}"
 fi
 
-if [[ -z "${vtk_dir}" ]]; then
-  vtk_install_dir_default="$HOME/opt/vtk-9.5.2-qt611-${build_suffix}/lib/cmake/vtk-9.5"
-  vtk_build_dir_default="$HOME/build/vtk-9.5.2-qt611-${build_suffix}/lib/cmake/vtk-9.5"
-  if [[ -f "${vtk_install_dir_default}/vtk-config.cmake" || -f "${vtk_install_dir_default}/VTKConfig.cmake" ]]; then
-    vtk_dir="${vtk_install_dir_default}"
-  elif [[ -f "${vtk_build_dir_default}/vtk-config.cmake" || -f "${vtk_build_dir_default}/VTKConfig.cmake" ]]; then
-    vtk_dir="${vtk_build_dir_default}"
-  else
-    echo "VTKConfig.cmake was not found for ${configuration}." >&2
-    echo "Expected one of:" >&2
-    echo "  ${vtk_install_dir_default}" >&2
-    echo "  ${vtk_build_dir_default}" >&2
-    echo "Run ./scripts/build-vtk-macos.sh --configuration ${configuration} first, or pass --vtk-dir explicitly." >&2
+if [[ -z "${vcpkg_triplet}" ]]; then
+  vcpkg_triplet="$(default_vcpkg_triplet_macos)"
+fi
+
+toolchain_file="${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
+cmake_extra=()
+
+if [[ -n "${qt6_dir}" ]]; then
+  if [[ -z "${vtk_dir}" ]]; then
+    echo "--vtk-dir is required when using --qt6-dir (non-vcpkg build)." >&2
     exit 1
   fi
+  if [[ "${configuration}" == "Debug" && ! -f "${vtk_dir}/VTK-targets-debug.cmake" ]]; then
+    echo "Debug builds require VTK debug targets at VTK_DIR='${vtk_dir}'." >&2
+    exit 1
+  fi
+  cmake_extra+=(-DQt6_DIR="${qt6_dir}" -DVTK_DIR="${vtk_dir}")
+else
+  cmake_extra+=(
+    "-DCMAKE_TOOLCHAIN_FILE=${toolchain_file}"
+    "-DVCPKG_TARGET_TRIPLET=${vcpkg_triplet}"
+  )
+  qt6_dir="${vcpkg_root}/installed/${vcpkg_triplet}/share/cmake/Qt6"
 fi
-
-if [[ "${configuration}" == "Debug" && ! -f "${vtk_dir}/VTK-targets-debug.cmake" ]]; then
-  echo "Debug builds require a VTK package with debug targets." >&2
-  echo "Resolved VTK_DIR='${vtk_dir}', but '${vtk_dir}/VTK-targets-debug.cmake' was not found." >&2
-  echo "Build debug VTK with ./scripts/build-vtk-macos.sh --configuration Debug, or pass a debug-capable --vtk-dir." >&2
-  exit 1
-fi
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 generator="$(resolve_generator)"
 cached_generator="$(read_cached_generator "${repo_root}/${build_dir}")"
@@ -178,9 +182,8 @@ cmake_args=(
   -B "${repo_root}/${build_dir}"
   -G "${generator}"
   -DCMAKE_BUILD_TYPE="${configuration}"
-  -DQt6_DIR="${qt6_dir}"
-  -DVTK_DIR="${vtk_dir}"
   -DND2SDK_ROOT="${nd2sdk_root}"
+  "${cmake_extra[@]}"
 )
 
 cmake "${cmake_args[@]}"

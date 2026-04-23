@@ -38,7 +38,7 @@ Before building, make sure the external reader dependencies are present:
 
 - Install Nikon's shared ND2 SDK and point `ND2SDK_ROOT` at it.
 - Build or install VTK before building `nd2-viewer`, then make `VTK_DIR` discoverable to CMake. The 3D viewer now always uses the VTK backend; there is no legacy OpenGL fallback on either Windows or macOS.
-- Install ITK with the `ITKCommon` and `ITKDeconvolution` modules, then make `ITK_DIR` discoverable to CMake. The intended package path is an ITK CMake package directory from a normal ITK install or from vcpkg's `itk` port. FFTW is not required by default.
+- Build or install ITK with the `ITKCommon` and `ITKDeconvolution` modules, then make `ITK_DIR` discoverable to CMake. The intended package path is an ITK CMake package directory from a normal ITK install. FFTW is not required by default.
 - Clone `libCZI` into `third_party/libczi`.
 
 Typical setup commands:
@@ -52,16 +52,21 @@ Expected SDK locations on the main supported platforms:
 - Windows: install the Nikon shared SDK so it is available at `C:\Program Files\nd2readsdk-shared`, or override `ND2SDK_ROOT`.
 - macOS Apple Silicon: unpack/install the Nikon shared SDK so it is available at `$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`, or override `ND2SDK_ROOT`.
 
-Current Qt and VTK defaults:
+Current Qt, VTK, and ITK defaults:
 
 - Windows: the helper scripts default to `QtRoot=C:\Qt\6.11.0\msvc2022_64` and resolve `VTK_DIR` by configuration:
   - Debug: `%USERPROFILE%\opt\vtk-9.5.2-qt611-debug\lib\cmake\vtk-9.5`, fallback `%USERPROFILE%\build\vtk-9.5.2-qt611-debug\lib\cmake\vtk-9.5`
   - Release: `%USERPROFILE%\opt\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`, fallback `%USERPROFILE%\build\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`
+- Windows: the helper scripts resolve `ITK_DIR` by configuration:
+  - Debug: `%USERPROFILE%\opt\itk-5.4.4-debug\lib\cmake\ITK-5.4`, fallback `%USERPROFILE%\build\itk-5.4.4-debug\lib\cmake\ITK-5.4`
+  - Release: `%USERPROFILE%\opt\itk-5.4.4-release\lib\cmake\ITK-5.4`, fallback `%USERPROFILE%\build\itk-5.4.4-release\lib\cmake\ITK-5.4`
 - macOS Apple Silicon: `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`
 - macOS Apple Silicon: build or install VTK first. `VTK_DIR` defaults by configuration:
   - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
   - Release: `$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
-- ITK: set `ITK_DIR` to the directory containing `ITKConfig.cmake`, or pass `-ItkDir` on Windows / `--itk-dir` on macOS.
+- macOS Apple Silicon: build or install ITK first. `ITK_DIR` defaults by configuration:
+  - Debug: `$HOME/opt/itk-5.4.4-debug/lib/cmake/ITK-5.4`, fallback `$HOME/build/itk-5.4.4-debug/lib/cmake/ITK-5.4`
+  - Release: `$HOME/opt/itk-5.4.4-release/lib/cmake/ITK-5.4`, fallback `$HOME/build/itk-5.4.4-release/lib/cmake/ITK-5.4`
 
 The build uses the vendored `libCZI` checkout at `third_party/libczi`, so if that directory is missing or empty the configure step will fail until it is cloned there.
 
@@ -144,6 +149,24 @@ export VTK_DIR="$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5"
 ./scripts/build-macos.sh --configuration Release
 ```
 
+### Build ITK First
+
+The app expects an ITK 5.4 package with `ITKCommon` and `ITKDeconvolution`. ITK does not need Qt for this app.
+
+The intended path is to use the bootstrap scripts:
+
+```powershell
+.\scripts\build-itk-msvc.ps1 -Configuration Debug
+.\scripts\build-itk-msvc.ps1 -Configuration Release
+```
+
+```bash
+./scripts/build-itk-macos.sh --configuration Debug
+./scripts/build-itk-macos.sh --configuration Release
+```
+
+Those scripts build ITK `v5.4.4` by default, disable tests/examples/wrapping, and request only the ITK modules `nd2-viewer` links against plus their dependency closure.
+
 The easiest path is:
 
 ```powershell
@@ -154,7 +177,7 @@ The easiest path is:
 The build script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc-debug` or `build-msvc-release`.
 
 Build or install VTK first. The Windows helper script requires `-Configuration Debug` or `-Configuration Release` and auto-detects the matching config-specific VTK path, or you can still set `VTK_DIR` or pass `-VtkDir`.
-Install ITK first as well. If CMake cannot find it automatically, set `ITK_DIR` or pass `-ItkDir` with the directory containing `ITKConfig.cmake`.
+Build or install ITK first as well. The Windows helper script auto-detects the matching config-specific ITK path from `scripts\build-itk-msvc.ps1`, or you can still set `ITK_DIR` or pass `-ItkDir`.
 
 On macOS, the easiest path is:
 
@@ -172,7 +195,7 @@ That script defaults to:
 
 - `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`
 - `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`
-- `ITK_DIR` from the environment, or `--itk-dir` when passed explicitly
+- `ITK_DIR=$HOME/opt/itk-5.4.4-<config>/lib/cmake/ITK-5.4`, fallback `$HOME/build/itk-5.4.4-<config>/lib/cmake/ITK-5.4`
 - `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
 - `build_dir=build-macos-debug` or `build-macos-release`
 - no implicit configuration; `--configuration` is required

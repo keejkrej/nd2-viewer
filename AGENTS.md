@@ -9,7 +9,7 @@
 - The 3D viewer is VTK-backed on both Windows and macOS, and VTK is now required for configure/build on both platforms.
 - The 2D deconvolution tool uses ITK `ITKCommon` and `ITKDeconvolution`, so ITK is now required for configure/build on both platforms.
 - Build or install VTK before running the app build scripts on either platform.
-- Build or install ITK before running the app build scripts on either platform, and set `ITK_DIR` if CMake cannot already resolve `ITKConfig.cmake`.
+- Build or install ITK before running the app build scripts on either platform. The helper scripts auto-detect the config-specific ITK bootstrap paths, or you can set `ITK_DIR` if CMake cannot already resolve `ITKConfig.cmake`.
 - The Nikon SDK is not vendored in this repo; install it separately and override `ND2SDK_ROOT` if it is not in the default location.
 - On Windows, pass `-VtkDir` to the PowerShell scripts or set `VTK_DIR` in the environment when CMake cannot already resolve `VTKConfig.cmake`.
 - On Windows, pass `-ItkDir` to the PowerShell scripts or set `ITK_DIR` in the environment when CMake cannot already resolve `ITKConfig.cmake`.
@@ -17,8 +17,12 @@
 - On macOS, the helper scripts now resolve `VTK_DIR` from configuration-specific paths:
   - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
   - Release: `$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
+- The helper scripts resolve `ITK_DIR` from configuration-specific paths:
+  - Debug: `$HOME/opt/itk-5.4.4-debug/lib/cmake/ITK-5.4`, fallback `$HOME/build/itk-5.4.4-debug/lib/cmake/ITK-5.4`
+  - Release: `$HOME/opt/itk-5.4.4-release/lib/cmake/ITK-5.4`, fallback `$HOME/build/itk-5.4.4-release/lib/cmake/ITK-5.4`
 - When documenting or recreating the local toolchain, use a Qt-enabled VTK `9.5.2` build with `VTK_BUILD_ALL_MODULES=OFF`, `VTK_BUILD_TESTING=OFF`, and `VTK_ENABLE_WRAPPING=OFF`.
 - The VTK bootstrap scripts build only the module set `nd2-viewer` links against, plus required VTK dependencies. They do not try to build every available VTK module.
+- The ITK bootstrap scripts build only `ITKCommon`, `ITKDeconvolution`, and required ITK dependencies, with tests/examples/wrapping disabled.
 - Windows VTK bootstrap example:
   - clone `https://github.com/Kitware/VTK.git`, checkout `v9.5.2`, configure with MSVC + Ninja, `Qt6_DIR=C:\Qt\6.11.0\msvc2022_64\lib\cmake\Qt6`, and `CMAKE_INSTALL_PREFIX=%USERPROFILE%\opt\vtk-9.5.2-qt611-release`
   - after install, use `VTK_DIR=%USERPROFILE%\opt\vtk-9.5.2-qt611-release\lib\cmake\vtk-9.5`
@@ -31,6 +35,8 @@
 
 - Bootstrap VTK on Windows: `.\scripts\build-vtk-msvc.ps1 -Configuration Debug` or `.\scripts\build-vtk-msvc.ps1 -Configuration Release`
 - Bootstrap VTK on macOS: `./scripts/build-vtk-macos.sh --configuration Debug` or `./scripts/build-vtk-macos.sh --configuration Release`
+- Bootstrap ITK on Windows: `.\scripts\build-itk-msvc.ps1 -Configuration Debug` or `.\scripts\build-itk-msvc.ps1 -Configuration Release`
+- Bootstrap ITK on macOS: `./scripts/build-itk-macos.sh --configuration Debug` or `./scripts/build-itk-macos.sh --configuration Release`
 - Day-to-day debug build: `.\scripts\build-msvc.ps1 -Configuration Debug`
 - Run the built app: `.\build-msvc-debug\bin\nd2-viewer.exe` (or your chosen `-BuildDir`)
 - Release packaging entrypoint: `.\scripts\package-msvc.ps1`

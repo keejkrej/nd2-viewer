@@ -18,7 +18,7 @@ Options:
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos-debug or build-macos-release
   --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
   --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5, fallback ~/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5
-  --itk-dir <path>        Path to ITKConfig.cmake. Defaults to ITK_DIR from the environment when set
+  --itk-dir <path>        Path to ITKConfig.cmake. Default: ~/opt/itk-5.4.4-<config>/lib/cmake/ITK-5.4, fallback ~/build/itk-5.4.4-<config>/lib/cmake/ITK-5.4
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
@@ -153,6 +153,23 @@ if [[ -z "${vtk_dir}" ]]; then
   fi
 fi
 
+if [[ -z "${itk_dir}" ]]; then
+  itk_install_dir_default="$HOME/opt/itk-5.4.4-${build_suffix}/lib/cmake/ITK-5.4"
+  itk_build_dir_default="$HOME/build/itk-5.4.4-${build_suffix}/lib/cmake/ITK-5.4"
+  if [[ -f "${itk_install_dir_default}/ITKConfig.cmake" || -f "${itk_install_dir_default}/itk-config.cmake" ]]; then
+    itk_dir="${itk_install_dir_default}"
+  elif [[ -f "${itk_build_dir_default}/ITKConfig.cmake" || -f "${itk_build_dir_default}/itk-config.cmake" ]]; then
+    itk_dir="${itk_build_dir_default}"
+  else
+    echo "ITKConfig.cmake was not found for ${configuration}." >&2
+    echo "Expected one of:" >&2
+    echo "  ${itk_install_dir_default}" >&2
+    echo "  ${itk_build_dir_default}" >&2
+    echo "Run ./scripts/build-itk-macos.sh --configuration ${configuration} first, or pass --itk-dir explicitly." >&2
+    exit 1
+  fi
+fi
+
 if [[ "${configuration}" == "Debug" && ! -f "${vtk_dir}/VTK-targets-debug.cmake" ]]; then
   echo "Debug builds require a VTK package with debug targets." >&2
   echo "Resolved VTK_DIR='${vtk_dir}', but '${vtk_dir}/VTK-targets-debug.cmake' was not found." >&2
@@ -162,7 +179,7 @@ fi
 
 if [[ -n "${itk_dir}" && ! -d "${itk_dir}" ]]; then
   echo "ITK_DIR was set to '${itk_dir}', but that directory does not exist." >&2
-  echo "Install ITK first, or pass --itk-dir with the directory containing ITKConfig.cmake." >&2
+  echo "Build/install ITK first, or pass --itk-dir with the directory containing ITKConfig.cmake." >&2
   exit 1
 fi
 

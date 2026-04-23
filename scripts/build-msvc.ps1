@@ -28,6 +28,12 @@ function Get-DefaultVtkDir([string]$ConfigurationName, [bool]$InstallTree) {
     return Join-Path $HOME "$root\vtk-9.5.2-qt611-$suffix\lib\cmake\vtk-9.5"
 }
 
+function Get-DefaultItkDir([string]$ConfigurationName, [bool]$InstallTree) {
+    $suffix = if ($ConfigurationName -eq "Debug") { "debug" } else { "release" }
+    $root = if ($InstallTree) { "opt" } else { "build" }
+    return Join-Path $HOME "$root\itk-5.4.4-$suffix\lib\cmake\ITK-5.4"
+}
+
 function Move-LegacyReleaseVtkTree([string]$RootName) {
     $legacyPath = Join-Path $HOME "$RootName\vtk-9.5.2-qt611"
     $releasePath = Join-Path $HOME "$RootName\vtk-9.5.2-qt611-release"
@@ -83,8 +89,18 @@ if ([string]::IsNullOrWhiteSpace($VtkDir)) {
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($ItkDir) -and $env:ITK_DIR) {
-    $ItkDir = $env:ITK_DIR
+if ([string]::IsNullOrWhiteSpace($ItkDir)) {
+    if ($env:ITK_DIR) {
+        $ItkDir = $env:ITK_DIR
+    } else {
+        $defaultItkInstallDir = Get-DefaultItkDir $Configuration $true
+        $defaultItkBuildDir = Get-DefaultItkDir $Configuration $false
+        if (Test-Path $defaultItkInstallDir) {
+            $ItkDir = $defaultItkInstallDir
+        } elseif (Test-Path $defaultItkBuildDir) {
+            $ItkDir = $defaultItkBuildDir
+        }
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($VtkDir)) {
@@ -100,10 +116,13 @@ if ($Configuration -eq "Debug" -and -not (Test-DebugVtkExports $VtkDir)) {
     throw "Debug builds require a debug VTK package. '$VtkDir' does not expose VTK debug targets. Run '.\scripts\build-vtk-msvc.ps1 -Configuration Debug' or pass a matching debug -VtkDir."
 }
 
-if (![string]::IsNullOrWhiteSpace($ItkDir)) {
-    if (!(Test-Path $ItkDir)) {
-        throw "ITK_DIR not found at '$ItkDir'. Install ITK first, or pass the directory containing ITKConfig.cmake."
-    }
+if ([string]::IsNullOrWhiteSpace($ItkDir)) {
+    $itkBuildCommand = ".\scripts\build-itk-msvc.ps1 -Configuration $Configuration"
+    throw "ITK_DIR is not set and no matching $Configuration ITK package was found. Run '$itkBuildCommand' first, or pass -ItkDir explicitly."
+}
+
+if (!(Test-Path $ItkDir)) {
+    throw "ITK_DIR not found at '$ItkDir'. Build/install ITK first, or pass the directory containing ITKConfig.cmake."
 }
 
 $configureArgs = @(
@@ -114,11 +133,9 @@ $configureArgs = @(
     "-DCMAKE_BUILD_TYPE=$Configuration",
     "-DQt6_DIR=`"$($qtCmakeDir -replace '\\', '/')`"",
     "-DND2SDK_ROOT=`"$($Nd2SdkRoot -replace '\\', '/')`"",
-    "-DVTK_DIR=`"$($VtkDir -replace '\\', '/')`""
+    "-DVTK_DIR=`"$($VtkDir -replace '\\', '/')`"",
+    "-DITK_DIR=`"$($ItkDir -replace '\\', '/')`""
 )
-if (![string]::IsNullOrWhiteSpace($ItkDir)) {
-    $configureArgs += "-DITK_DIR=`"$($ItkDir -replace '\\', '/')`""
-}
 $configureCommand = $configureArgs -join " "
 
 $buildCommand = @(

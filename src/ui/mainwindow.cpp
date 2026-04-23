@@ -26,6 +26,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QLabel>
 #include <QLibraryInfo>
 #include <QLocale>
@@ -85,6 +86,144 @@ bool hasQtFfmpegMediaPlugin(const QStringList &libraryPaths)
     }
 
     return false;
+}
+
+std::optional<double> finiteNumber(const QJsonValue &value)
+{
+    double number = 0.0;
+    if (value.isDouble()) {
+        number = value.toDouble();
+    } else if (value.isString()) {
+        bool ok = false;
+        number = value.toString().toDouble(&ok);
+        if (!ok) {
+            return std::nullopt;
+        }
+    } else {
+        return std::nullopt;
+    }
+
+    return std::isfinite(number) ? std::optional<double>(number) : std::nullopt;
+}
+
+std::optional<double> firstFiniteNumber(const QJsonObject &object, std::initializer_list<const char *> keys)
+{
+    for (const char *key : keys) {
+        if (const std::optional<double> number = finiteNumber(object.value(QLatin1StringView(key)))) {
+            return number;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<double> timeMsFromObject(const QJsonObject &object)
+{
+    return firstFiniteNumber(object,
+                             {"relativeTimeMs",
+                              "relativeTimeMS",
+                              "relativeTimeMsec",
+                              "relativeTimeMSec",
+                              "timeMs",
+                              "timeMS",
+                              "timeMsec",
+                              "timeMSec",
+                              "t_ms",
+                              "dTimeMSec"});
+}
+
+std::optional<double> timeMsFromChannelValue(const QJsonValue &value)
+{
+    if (!value.isObject()) {
+        return std::nullopt;
+    }
+
+    const QJsonObject object = value.toObject();
+    if (const std::optional<double> timeMs = timeMsFromObject(object)) {
+        return timeMs;
+    }
+
+    return timeMsFromObject(object.value(QStringLiteral("time")).toObject());
+}
+
+std::optional<double> timeMsFromChannelsValue(const QJsonValue &value)
+{
+    if (value.isArray()) {
+        const QJsonArray channels = value.toArray();
+        for (const QJsonValue &channelValue : channels) {
+            if (const std::optional<double> timeMs = timeMsFromChannelValue(channelValue)) {
+                return timeMs;
+            }
+        }
+        return std::nullopt;
+    }
+
+    if (value.isObject()) {
+        const QJsonObject channelsObject = value.toObject();
+        if (const std::optional<double> timeMs = timeMsFromChannelValue(channelsObject)) {
+            return timeMs;
+        }
+        for (auto it = channelsObject.begin(); it != channelsObject.end(); ++it) {
+            if (const std::optional<double> timeMs = timeMsFromChannelValue(it.value())) {
+                return timeMs;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<double> frameRelativeTimeMs(const MetadataSection &section)
+{
+    if (!section.treeValue.isObject()) {
+        return std::nullopt;
+    }
+
+    const QJsonObject metadata = section.treeValue.toObject();
+    if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channels")))) {
+        return timeMs;
+    }
+    if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channel")))) {
+        return timeMs;
+    }
+    if (const std::optional<double> timeMs = timeMsFromChannelValue(metadata.value(QStringLiteral("time")))) {
+        return timeMs;
+    }
+    return timeMsFromObject(metadata);
+}
+
+QString formatElapsedTime(double relativeTimeMs)
+{
+    qint64 totalMs = qMax<qint64>(0, qRound64(relativeTimeMs));
+    const qint64 hours = totalMs / 3600000;
+    totalMs %= 3600000;
+    const qint64 minutes = totalMs / 60000;
+    totalMs %= 60000;
+    const qint64 seconds = totalMs / 1000;
+    const qint64 milliseconds = totalMs % 1000;
+
+    if (hours > 0) {
+        return QStringLiteral("%1:%2:%3.%4")
+            .arg(hours)
+            .arg(minutes, 2, 10, QLatin1Char('0'))
+            .arg(seconds, 2, 10, QLatin1Char('0'))
+            .arg(milliseconds, 3, 10, QLatin1Char('0'));
+    }
+
+    if (minutes > 0) {
+        return QStringLiteral("%1:%2.%3")
+            .arg(minutes)
+            .arg(seconds, 2, 10, QLatin1Char('0'))
+            .arg(milliseconds, 3, 10, QLatin1Char('0'));
+    }
+
+    QString text = QStringLiteral("%1.%2").arg(seconds).arg(milliseconds, 3, 10, QLatin1Char('0'));
+    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0'))) {
+        text.chop(1);
+    }
+    if (text.endsWith(QLatin1Char('.'))) {
+        text.chop(1);
+    }
+    return QStringLiteral("%1 s").arg(text);
 }
 
 QString scalarToDisplayString(const QJsonValue &value)
@@ -2804,10 +2943,12 @@ QString MainWindow::buildCurrentTimeOverlayText() const
         return {};
     }
 
-    const QString loopLabel = info.loops.at(timeLoopIndex).label.isEmpty()
-                                  ? tr("Time")
-                                  : info.loops.at(timeLoopIndex).label;
-    return QStringLiteral("%1: %2").arg(loopLabel, QString::number(state.values.at(timeLoopIndex)));
+    const std::optional<double> relativeTimeMs = frameRelativeTimeMs(controller_.currentFrameMetadataSection());
+    if (!relativeTimeMs) {
+        return {};
+    }
+
+    return tr("Time: %1").arg(formatElapsedTime(*relativeTimeMs));
 }
 
 double MainWindow::currentMicronsPerPixelX() const

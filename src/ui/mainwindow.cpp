@@ -64,6 +64,7 @@
 #include <tiffio.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <optional>
@@ -1166,6 +1167,7 @@ void MainWindow::updateDocumentUi()
 
     imageViewport_->clearRoi();
     imageViewport_->setImage(controller_.renderedFrame().image);
+    updateViewerOverlays();
     if (imageViewport_->hasImage()) {
         imageViewport_->zoomToFit();
     }
@@ -1201,6 +1203,7 @@ void MainWindow::updateCoordinateUi()
         loopControls_[index].spinBox->setValue(state.values.at(index));
     }
     updateInfoLabel();
+    updateViewerOverlays();
     applyZLoopNavigatorLock();
 }
 
@@ -1218,6 +1221,7 @@ void MainWindow::updateFrameUi()
     if (!hadImage && imageViewport_->hasImage() && !isVolumeViewActive()) {
         imageViewport_->zoomToFit();
     }
+    updateViewerOverlays();
     updateViewModeButtons();
     updateInfoLabel();
     if (!isVolumeViewActive() && timePlaybackActive_ && timePlaybackAwaitingFrame_) {
@@ -1427,6 +1431,12 @@ void MainWindow::buildCentralUi()
 
     canvasLayout->addWidget(viewModeRow, 0);
     canvasLayout->addWidget(viewerStack_, 1);
+
+    volumeOverlayLabel_ = new QLabel(volumePage_);
+    volumeOverlayLabel_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    volumeOverlayLabel_->setStyleSheet(QStringLiteral("QLabel { background: rgba(0, 0, 0, 145); color: rgba(255,255,255,230); padding: 6px 8px; border-radius: 4px; }"));
+    volumeOverlayLabel_->move(12, 12);
+    volumeOverlayLabel_->hide();
 
     auto *channelsSection = new QWidget(central);
     auto *channelsLayout = new QVBoxLayout(channelsSection);
@@ -2059,6 +2069,9 @@ void MainWindow::ensureVolumeViewport()
 
     volumeViewport_ = new VolumeViewport3D(volumePage_);
     volumeOuterLayout->addWidget(volumeViewport_, 1);
+    if (volumeOverlayLabel_) {
+        volumeOverlayLabel_->raise();
+    }
 }
 
 void MainWindow::setLiveAutoForAllChannels(bool enabled)
@@ -2776,6 +2789,54 @@ QString MainWindow::sanitizeToken(const QString &value) const
     sanitized.replace(QRegularExpression(QStringLiteral("_+")), QStringLiteral("_"));
     sanitized.remove(QRegularExpression(QStringLiteral("^_+|_+$")));
     return sanitized.isEmpty() ? QStringLiteral("frame") : sanitized;
+}
+
+QString MainWindow::buildCurrentTimeOverlayText() const
+{
+    if (!controller_.hasDocument()) {
+        return {};
+    }
+
+    const DocumentInfo &info = controller_.documentInfo();
+    const FrameCoordinateState &state = controller_.coordinateState();
+    const int timeLoopIndex = findTimeLoopIndex();
+    if (timeLoopIndex < 0 || timeLoopIndex >= state.values.size() || timeLoopIndex >= info.loops.size()) {
+        return {};
+    }
+
+    const QString loopLabel = info.loops.at(timeLoopIndex).label.isEmpty()
+                                  ? tr("Time")
+                                  : info.loops.at(timeLoopIndex).label;
+    return QStringLiteral("%1: %2").arg(loopLabel, QString::number(state.values.at(timeLoopIndex)));
+}
+
+double MainWindow::currentMicronsPerPixelX() const
+{
+    if (!controller_.hasDocument()) {
+        return 0.0;
+    }
+
+    const double calibration = controller_.documentInfo().axesCalibration.x();
+    return std::isfinite(calibration) && calibration > 0.0 ? calibration : 0.0;
+}
+
+void MainWindow::updateViewerOverlays()
+{
+    if (!imageViewport_) {
+        return;
+    }
+
+    const QString timestamp = buildCurrentTimeOverlayText();
+    imageViewport_->setOverlayTimestamp(timestamp);
+    imageViewport_->setScaleBarCalibrationMicronsPerPixel(currentMicronsPerPixelX());
+
+    if (volumeOverlayLabel_) {
+        volumeOverlayLabel_->setText(timestamp);
+        volumeOverlayLabel_->setVisible(!timestamp.isEmpty() && controller_.hasDocument());
+        volumeOverlayLabel_->adjustSize();
+        volumeOverlayLabel_->move(12, 12);
+        volumeOverlayLabel_->raise();
+    }
 }
 
 void MainWindow::updateWindowTitle()

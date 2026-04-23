@@ -147,6 +147,9 @@ private:
     void autoContrastAllForActiveView();
     [[nodiscard]] QImage captureCurrentVolumeImage() const;
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
+    [[nodiscard]] QString buildCurrentTimeOverlayText() const;
+    [[nodiscard]] double currentMicronsPerPixelX() const;
+    void updateViewerOverlays();
     void updateWindowTitle();
     void updateInfoLabel();
 
@@ -159,6 +162,7 @@ private:
     QPushButton *viewActionButton_ = nullptr;
     QWidget *volumePage_ = nullptr;
     VolumeViewport3D *volumeViewport_ = nullptr;
+    QLabel *volumeOverlayLabel_ = nullptr;
     QFutureWatcher<VolumeLoadResult> volumeWatcher_;
     int volumeLoadGeneration_ = 0;
     RawVolume cachedVolume_;

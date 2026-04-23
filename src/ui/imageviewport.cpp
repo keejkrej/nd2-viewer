@@ -14,6 +14,10 @@
 namespace
 {
 constexpr double kMinRoiDimension = 1.0;
+constexpr int kOverlayMargin = 12;
+constexpr double kScaleBarTargetFraction = 0.2;
+constexpr int kScaleBarMinPixels = 48;
+constexpr int kScaleBarMaxPixels = 220;
 }
 
 ImageViewport::ImageViewport(QWidget *parent)
@@ -140,6 +144,27 @@ void ImageViewport::clearRoi()
     setRoiRectInternal({});
 }
 
+void ImageViewport::setOverlayTimestamp(const QString &timestampText)
+{
+    if (overlayTimestamp_ == timestampText) {
+        return;
+    }
+
+    overlayTimestamp_ = timestampText;
+    update();
+}
+
+void ImageViewport::setScaleBarCalibrationMicronsPerPixel(double micronsPerPixel)
+{
+    const double clamped = std::isfinite(micronsPerPixel) && micronsPerPixel > 0.0 ? micronsPerPixel : 0.0;
+    if (qFuzzyCompare(scaleBarMicronsPerPixel_ + 1.0, clamped + 1.0)) {
+        return;
+    }
+
+    scaleBarMicronsPerPixel_ = clamped;
+    update();
+}
+
 void ImageViewport::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
@@ -171,6 +196,71 @@ void ImageViewport::paintEvent(QPaintEvent *event)
         painter.setBrush(QColor(84, 181, 255, 48));
         painter.setPen(QPen(QColor(84, 181, 255), 1.5));
         painter.drawRect(roiWidgetRect);
+    }
+
+    const bool showScaleBar = scaleBarMicronsPerPixel_ > 0.0;
+    const bool showTimestamp = !overlayTimestamp_.trimmed().isEmpty();
+    if (!showScaleBar && !showTimestamp) {
+        return;
+    }
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QFont overlayFont = painter.font();
+    overlayFont.setPointSizeF(std::max(8.0, overlayFont.pointSizeF()));
+    painter.setFont(overlayFont);
+    const QFontMetrics fontMetrics(overlayFont);
+
+    if (showTimestamp) {
+        const QString text = overlayTimestamp_.trimmed();
+        const QRect textRect = fontMetrics.boundingRect(text);
+        const QRect bubble(kOverlayMargin - 6,
+                           kOverlayMargin - 3,
+                           textRect.width() + 12,
+                           textRect.height() + 6);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 145));
+        painter.drawRoundedRect(bubble, 4.0, 4.0);
+        painter.setPen(QColor(255, 255, 255, 230));
+        painter.drawText(QPointF(kOverlayMargin, kOverlayMargin + fontMetrics.ascent()), text);
+    }
+
+    if (showScaleBar) {
+        const double pixelsPerMicron = effectiveScale() / scaleBarMicronsPerPixel_;
+        if (pixelsPerMicron > 0.0) {
+            const double targetPx = std::clamp(width() * kScaleBarTargetFraction,
+                                               static_cast<double>(kScaleBarMinPixels),
+                                               static_cast<double>(kScaleBarMaxPixels));
+            const double targetMicrons = targetPx / pixelsPerMicron;
+            const double exponent = std::floor(std::log10(std::max(targetMicrons, 1e-9)));
+            const double base = std::pow(10.0, exponent);
+            const double normalized = targetMicrons / base;
+            const double snapped = normalized < 1.5 ? 1.0 : (normalized < 3.5 ? 2.0 : (normalized < 7.5 ? 5.0 : 10.0));
+            const double scaleMicrons = snapped * base;
+            const double scalePixels = scaleMicrons * pixelsPerMicron;
+
+            if (scalePixels >= 1.0) {
+                const int x0 = kOverlayMargin;
+                const int y0 = height() - kOverlayMargin;
+                const int x1 = x0 + static_cast<int>(std::round(scalePixels));
+
+                const QString label = scaleBarLabelForMicrons(scaleMicrons);
+                const QRect labelRect = fontMetrics.boundingRect(label);
+                const int bubbleHeight = labelRect.height() + 28;
+                const int bubbleWidth = std::max(labelRect.width() + 16, x1 - x0 + 16);
+                const QRect bubble(x0 - 8, y0 - bubbleHeight - 4, bubbleWidth, bubbleHeight);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(0, 0, 0, 145));
+                painter.drawRoundedRect(bubble, 4.0, 4.0);
+
+                painter.setPen(QPen(QColor(255, 255, 255, 235), 3.0, Qt::SolidLine, Qt::SquareCap));
+                painter.drawLine(QPointF(x0, y0 - 12), QPointF(x1, y0 - 12));
+                painter.setPen(QPen(QColor(255, 255, 255, 235), 2.0));
+                painter.drawLine(QPointF(x0, y0 - 17), QPointF(x0, y0 - 7));
+                painter.drawLine(QPointF(x1, y0 - 17), QPointF(x1, y0 - 7));
+                painter.setPen(QColor(255, 255, 255, 230));
+                painter.drawText(QPointF(x0, y0 - 20), label);
+            }
+        }
     }
 }
 
@@ -464,4 +554,17 @@ void ImageViewport::updateCursor()
     }
 
     unsetCursor();
+}
+
+QString ImageViewport::scaleBarLabelForMicrons(double microns) const
+{
+    if (microns >= 1000.0) {
+        return QStringLiteral("%1 mm").arg(QString::number(microns / 1000.0, 'g', 3));
+    }
+
+    if (microns < 1.0) {
+        return QStringLiteral("%1 nm").arg(QString::number(microns * 1000.0, 'g', 3));
+    }
+
+    return QStringLiteral("%1 µm").arg(QString::number(microns, 'g', 3));
 }

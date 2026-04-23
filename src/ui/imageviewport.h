@@ -4,6 +4,7 @@
 #include <QPoint>
 #include <QPointF>
 #include <QRect>
+#include <QString>
 #include <QWidget>
 
 class ImageViewport : public QWidget
@@ -33,6 +34,8 @@ public:
     [[nodiscard]] bool hasRoi() const;
     [[nodiscard]] QRect roiRect() const;
     void clearRoi();
+    void setOverlayTimestamp(const QString &timestampText);
+    void setScaleBarCalibrationMicronsPerPixel(double micronsPerPixel);
 
 signals:
     void hoveredPixelChanged(const QPoint &pixelPosition, bool insideImage);
@@ -71,6 +74,7 @@ private:
     void clampPanOffset();
     void setRoiRectInternal(const QRect &roiRect);
     void updateCursor();
+    [[nodiscard]] QString scaleBarLabelForMicrons(double microns) const;
 
     QImage image_;
     double zoomFactor_ = 1.0;
@@ -82,4 +86,6 @@ private:
     QRect roiRect_;
     QPointF roiDragStartImage_;
     QPointF roiDragCurrentImage_;
+    QString overlayTimestamp_;
+    double scaleBarMicronsPerPixel_ = 0.0;
 };

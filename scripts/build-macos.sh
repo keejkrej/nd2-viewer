@@ -6,6 +6,7 @@ configuration=""
 build_dir=""
 qt6_dir="${Qt6_DIR:-$HOME/Qt/6.11.0/macos/lib/cmake/Qt6}"
 vtk_dir="${VTK_DIR:-}"
+itk_dir="${ITK_DIR:-}"
 nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
 
 usage() {
@@ -17,6 +18,7 @@ Options:
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos-debug or build-macos-release
   --qt6-dir <path>        Path to Qt6Config.cmake. Default: ~/Qt/6.11.0/macos/lib/cmake/Qt6
   --vtk-dir <path>        Path to VTKConfig.cmake. Default: ~/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5, fallback ~/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5
+  --itk-dir <path>        Path to ITKConfig.cmake. Defaults to ITK_DIR from the environment when set
   --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
   -h, --help              Show this help text
 EOF
@@ -87,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       vtk_dir="$2"
       shift 2
       ;;
+    --itk-dir)
+      itk_dir="$2"
+      shift 2
+      ;;
     --nd2sdk-root)
       nd2sdk_root="$2"
       shift 2
@@ -154,6 +160,12 @@ if [[ "${configuration}" == "Debug" && ! -f "${vtk_dir}/VTK-targets-debug.cmake"
   exit 1
 fi
 
+if [[ -n "${itk_dir}" && ! -d "${itk_dir}" ]]; then
+  echo "ITK_DIR was set to '${itk_dir}', but that directory does not exist." >&2
+  echo "Install ITK first, or pass --itk-dir with the directory containing ITKConfig.cmake." >&2
+  exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 generator="$(resolve_generator)"
@@ -182,6 +194,10 @@ cmake_args=(
   -DVTK_DIR="${vtk_dir}"
   -DND2SDK_ROOT="${nd2sdk_root}"
 )
+
+if [[ -n "${itk_dir}" ]]; then
+  cmake_args+=(-DITK_DIR="${itk_dir}")
+fi
 
 cmake "${cmake_args[@]}"
 cmake --build "${repo_root}/${build_dir}" --parallel "${parallel}"

@@ -361,6 +361,23 @@ void clearLayout(QLayout *layout)
     }
 }
 
+QString coordinateSummary(const DocumentInfo &info, const FrameCoordinateState &state)
+{
+    if (info.loops.isEmpty()) {
+        return QStringLiteral("single frame");
+    }
+
+    QStringList parts;
+    for (int index = 0; index < info.loops.size(); ++index) {
+        const LoopInfo &loop = info.loops.at(index);
+        const QString label = loop.label.isEmpty() ? loop.type : loop.label;
+        const int value = index < state.values.size() ? state.values.at(index) : 0;
+        parts << QStringLiteral("%1=%2").arg(label, QString::number(value));
+    }
+
+    return parts.join(QStringLiteral(", "));
+}
+
 } // namespace
 
 class FileInfoDialog final : public QDialog
@@ -532,6 +549,99 @@ private:
 
 namespace
 {
+class DeconvolutionSettingsDialog final : public QDialog
+{
+public:
+    explicit DeconvolutionSettingsDialog(QWidget *parent = nullptr)
+        : QDialog(parent)
+    {
+        setWindowTitle(tr("Deconvolution"));
+        setModal(true);
+
+        auto *layout = new QVBoxLayout(this);
+        auto *formLayout = new QFormLayout();
+
+        iterationsSpin_ = new QSpinBox(this);
+        iterationsSpin_->setRange(1, 100);
+        iterationsSpin_->setValue(20);
+        formLayout->addRow(tr("Iterations"), iterationsSpin_);
+
+        sigmaSpin_ = new QDoubleSpinBox(this);
+        sigmaSpin_->setRange(0.2, 10.0);
+        sigmaSpin_->setDecimals(2);
+        sigmaSpin_->setSingleStep(0.1);
+        sigmaSpin_->setSuffix(tr(" px"));
+        sigmaSpin_->setValue(1.2);
+        formLayout->addRow(tr("Gaussian sigma"), sigmaSpin_);
+
+        kernelRadiusSpin_ = new QSpinBox(this);
+        kernelRadiusSpin_->setRange(1, 31);
+        kernelRadiusSpin_->setValue(5);
+        kernelRadiusSpin_->setSuffix(tr(" px"));
+        formLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
+
+        layout->addLayout(formLayout);
+
+        auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Run"));
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttonBox);
+    }
+
+    [[nodiscard]] DeconvolutionSettings settings() const
+    {
+        DeconvolutionSettings settings;
+        settings.iterations = iterationsSpin_->value();
+        settings.gaussianSigmaPixels = sigmaSpin_->value();
+        settings.kernelRadiusPixels = kernelRadiusSpin_->value();
+        return settings;
+    }
+
+private:
+    QSpinBox *iterationsSpin_ = nullptr;
+    QDoubleSpinBox *sigmaSpin_ = nullptr;
+    QSpinBox *kernelRadiusSpin_ = nullptr;
+};
+
+class DeconvolutionResultWindow final : public QDialog
+{
+public:
+    DeconvolutionResultWindow(const QImage &image, const QString &title, QWidget *parent = nullptr)
+        : QDialog(parent)
+    {
+        setAttribute(Qt::WA_DeleteOnClose);
+        setWindowTitle(title);
+        setModal(false);
+        resize(960, 720);
+
+        auto *layout = new QVBoxLayout(this);
+        auto *toolbar = new QWidget(this);
+        auto *toolbarLayout = new QHBoxLayout(toolbar);
+        toolbarLayout->setContentsMargins(0, 0, 0, 0);
+        toolbarLayout->setSpacing(8);
+
+        auto *fitButton = new QPushButton(tr("Fit"), toolbar);
+        auto *actualSizeButton = new QPushButton(tr("Actual Size"), toolbar);
+        toolbarLayout->addWidget(fitButton);
+        toolbarLayout->addWidget(actualSizeButton);
+        toolbarLayout->addStretch(1);
+        layout->addWidget(toolbar, 0);
+
+        viewport_ = new ImageViewport(this);
+        viewport_->setImage(image);
+        layout->addWidget(viewport_, 1);
+
+        connect(fitButton, &QPushButton::clicked, viewport_, &ImageViewport::zoomToFit);
+        connect(actualSizeButton, &QPushButton::clicked, viewport_, &ImageViewport::setActualSize);
+
+        QTimer::singleShot(0, viewport_, &ImageViewport::zoomToFit);
+    }
+
+private:
+    ImageViewport *viewport_ = nullptr;
+};
+
 QString formatDurationLabel(double seconds)
 {
     int remainingSeconds = qMax(0, qRound(seconds));
@@ -759,6 +869,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(view2dButton_, &QPushButton::clicked, this, [this]() { setVolumeViewActive(false); });
     connect(view3dButton_, &QPushButton::clicked, this, [this]() { setVolumeViewActive(true); });
     connect(&volumeWatcher_, &QFutureWatcher<VolumeLoadResult>::finished, this, &MainWindow::handleVolumeLoadFinished);
+    connect(&deconvolutionWatcher_, &QFutureWatcher<DeconvolutionResult>::finished, this, &MainWindow::handleDeconvolutionFinished);
 
     updateDocumentUi();
 
@@ -834,6 +945,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (volumeWatcher_.isRunning()) {
         volumeWatcher_.waitForFinished();
     }
+    if (deconvolutionWatcher_.isRunning()) {
+        deconvolutionWatcher_.waitForFinished();
+    }
 
     QMainWindow::closeEvent(event);
 }
@@ -885,6 +999,88 @@ void MainWindow::exportMovieAs()
 void MainWindow::exportRoiMovieAs()
 {
     exportMovieSelection(ExportScope::Roi);
+}
+
+void MainWindow::runDeconvolution()
+{
+    if (deconvolutionInProgress_ || movieExportInProgress_) {
+        return;
+    }
+
+    if (isVolumeViewActive()) {
+        QMessageBox::information(this,
+                                 tr("Deconvolution"),
+                                 tr("Deconvolution is available only in 2D mode."));
+        return;
+    }
+
+    if (!controller_.hasDocument()) {
+        QMessageBox::information(this,
+                                 tr("Deconvolution"),
+                                 tr("Open an ND2 or CZI file before running deconvolution."));
+        return;
+    }
+
+    const RawFrame rawFrame = controller_.currentRawFrame();
+    if (!rawFrame.isValid()) {
+        QMessageBox::warning(this,
+                             tr("Deconvolution"),
+                             tr("A valid raw frame is not ready yet."));
+        return;
+    }
+
+    const QVector<ChannelRenderSettings> channelSettings = controller_.channelSettings();
+    if (channelSettings.isEmpty()) {
+        QMessageBox::warning(this,
+                             tr("Deconvolution"),
+                             tr("Channel settings are not ready yet."));
+        return;
+    }
+
+    DeconvolutionSettingsDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const DeconvolutionSettings settings = dialog.settings();
+    const FrameCoordinateState coordinates = controller_.coordinateState();
+    pendingDeconvolutionTitle_ =
+        tr("Deconvolution - %1 - iter %2, sigma %3 px, radius %4 px")
+            .arg(coordinateSummary(controller_.documentInfo(), coordinates))
+            .arg(settings.iterations)
+            .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
+            .arg(settings.kernelRadiusPixels);
+
+    deconvolutionInProgress_ = true;
+    updateDeconvolutionActionState();
+    statusBar()->showMessage(tr("Running 2D deconvolution..."));
+    setCursor(Qt::BusyCursor);
+
+    deconvolutionWatcher_.setFuture(QtConcurrent::run([rawFrame, coordinates, channelSettings, settings]() {
+        return DeconvolutionProcessor::run2D(rawFrame, coordinates, channelSettings, settings);
+    }));
+}
+
+void MainWindow::handleDeconvolutionFinished()
+{
+    const DeconvolutionResult result = deconvolutionWatcher_.result();
+    deconvolutionInProgress_ = false;
+    unsetCursor();
+    updateDeconvolutionActionState();
+
+    if (!result.success || result.image.isNull()) {
+        const QString message = result.errorMessage.isEmpty()
+                                    ? tr("The deconvolution result could not be prepared.")
+                                    : result.errorMessage;
+        statusBar()->showMessage(tr("Deconvolution failed."), 5000);
+        QMessageBox::warning(this, tr("Deconvolution"), message);
+        return;
+    }
+
+    auto *window = new DeconvolutionResultWindow(result.image, pendingDeconvolutionTitle_, this);
+    window->show();
+    statusBar()->showMessage(tr("Deconvolution complete."), 3000);
+    pendingDeconvolutionTitle_.clear();
 }
 
 void MainWindow::showFileInfoDialog()
@@ -961,6 +1157,7 @@ void MainWindow::updateViewModeButtons()
                                           : tr("Fit the current image to the viewport once."));
         viewActionButton_->setEnabled(!movieExportInProgress_ && (volumeActive ? volumeReady : hasImage));
     }
+    updateDeconvolutionActionState();
 }
 
 void MainWindow::openAutoContrastTuningDialog(int channelIndex)
@@ -1475,6 +1672,10 @@ void MainWindow::buildMenus()
                                                    : ImageViewport::InteractionMode::Pan);
     });
 
+    toolsMenu->addSeparator();
+    deconvolutionAction_ = toolsMenu->addAction(tr("Deconvolution..."));
+    connect(deconvolutionAction_, &QAction::triggered, this, &MainWindow::runDeconvolution);
+    updateDeconvolutionActionState();
 }
 
 void MainWindow::buildCentralUi()
@@ -2442,6 +2643,20 @@ void MainWindow::autoContrastAllForActiveView()
     }
 
     controller_.autoContrastAllChannels();
+}
+
+void MainWindow::updateDeconvolutionActionState()
+{
+    if (!deconvolutionAction_) {
+        return;
+    }
+
+    const bool available = !deconvolutionInProgress_
+                           && !movieExportInProgress_
+                           && controller_.hasDocument()
+                           && !isVolumeViewActive()
+                           && controller_.currentRawFrame().isValid();
+    deconvolutionAction_->setEnabled(available);
 }
 
 void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)

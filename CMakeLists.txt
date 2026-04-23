@@ -75,6 +75,7 @@ endif()
 set(ND2SDK_ROOT "${_nd2sdk_root_default}" CACHE PATH "Path to the ND2 SDK root.")
 set(Qt6_DIR "${_qt6_dir_default}" CACHE PATH "Path to Qt6Config.cmake, e.g. C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6")
 set(VTK_DIR "${_vtk_dir_default}" CACHE PATH "Path to VTKConfig.cmake. Override if your VTK install is not auto-detected.")
+set(ITK_DIR "$ENV{ITK_DIR}" CACHE PATH "Path to ITKConfig.cmake. Override if your ITK install is not auto-detected.")
 
 if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
@@ -82,8 +83,13 @@ endif()
 if(VTK_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${VTK_DIR}")
 endif()
+if(ITK_DIR)
+  list(APPEND CMAKE_PREFIX_PATH "${ITK_DIR}")
+endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets)
+find_package(ITK REQUIRED COMPONENTS ITKCommon ITKDeconvolution)
+include(${ITK_USE_FILE})
 find_package(VTK CONFIG REQUIRED COMPONENTS
   CommonCore
   CommonDataModel
@@ -149,6 +155,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/policydocumentreader.h
   src/core/czireader.cpp
   src/core/czireader.h
+  src/core/deconvolution.cpp
+  src/core/deconvolution.h
   src/core/framerenderer.cpp
   src/core/framerenderer.h
   src/core/movieexporter.cpp
@@ -279,6 +287,7 @@ target_link_libraries(nd2-viewer
     libCZI
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
+    ${ITK_LIBRARIES}
     ${ND2VIEWER_VTK_LIBS}
 )
 

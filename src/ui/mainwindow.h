@@ -3,6 +3,7 @@
 #include "core/movieexporter.h"
 #include "core/readfailurepolicy.h"
 #include "core/documentcontroller.h"
+#include "core/deconvolution.h"
 #include "core/volumeloader.h"
 #include "ui/volumeviewport3d.h"
 
@@ -44,6 +45,8 @@ private slots:
     void saveCurrentRoiAs();
     void exportMovieAs();
     void exportRoiMovieAs();
+    void runDeconvolution();
+    void handleDeconvolutionFinished();
     void updateDocumentUi();
     void updateCoordinateUi();
     void updateChannelUi();
@@ -145,6 +148,7 @@ private:
     void setLiveAutoForAllChannels(bool enabled);
     void autoContrastChannelForActiveView(int channelIndex);
     void autoContrastAllForActiveView();
+    void updateDeconvolutionActionState();
     [[nodiscard]] QImage captureCurrentVolumeImage() const;
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     [[nodiscard]] QString buildCurrentTimeOverlayText() const;
@@ -181,7 +185,11 @@ private:
     QAction *openAction_ = nullptr;
     QAction *reloadAction_ = nullptr;
     QAction *fileInfoAction_ = nullptr;
+    QAction *deconvolutionAction_ = nullptr;
     QAction *quitAction_ = nullptr;
+    QFutureWatcher<DeconvolutionResult> deconvolutionWatcher_;
+    bool deconvolutionInProgress_ = false;
+    QString pendingDeconvolutionTitle_;
     bool movieExportInProgress_ = false;
     bool timePlaybackActive_ = false;
     bool timePlaybackAwaitingFrame_ = false;

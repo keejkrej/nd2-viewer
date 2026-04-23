@@ -7,9 +7,12 @@
 - The repo also supports macOS Apple Silicon builds via Qt `6.11.0`, VTK, and the Nikon macOS shared SDK.
 - On Windows, Nikon's shared ND2 SDK is expected at `C:\Program Files\nd2readsdk-shared`.
 - The 3D viewer is VTK-backed on both Windows and macOS, and VTK is now required for configure/build on both platforms.
+- The 2D deconvolution tool uses ITK `ITKCommon` and `ITKDeconvolution`, so ITK is now required for configure/build on both platforms.
 - Build or install VTK before running the app build scripts on either platform.
+- Build or install ITK before running the app build scripts on either platform, and set `ITK_DIR` if CMake cannot already resolve `ITKConfig.cmake`.
 - The Nikon SDK is not vendored in this repo; install it separately and override `ND2SDK_ROOT` if it is not in the default location.
 - On Windows, pass `-VtkDir` to the PowerShell scripts or set `VTK_DIR` in the environment when CMake cannot already resolve `VTKConfig.cmake`.
+- On Windows, pass `-ItkDir` to the PowerShell scripts or set `ITK_DIR` in the environment when CMake cannot already resolve `ITKConfig.cmake`.
 - On macOS, the current default Qt path is `$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`.
 - On macOS, the helper scripts now resolve `VTK_DIR` from configuration-specific paths:
   - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
@@ -92,6 +95,7 @@ cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && <your command>"
 - `Live auto` is now percentile-based per channel. Each channel keeps its own min/max percentile defaults and uses them on frame reloads and movie export.
 - The channel tune control opens a histogram dialog for the current frame. Numeric percentile edits preview immediately, while dragging the min/max threshold lines is intentionally deferred until mouse release.
 - The integrated `3D` mode is available for files with a usable z-loop and reuses the main viewer instead of opening a separate window.
+- `Tools > Deconvolution...` is a 2D-only Richardson-Lucy preview tool. It snapshots the current raw frame and channel settings, runs ITK in the background, and opens an independent result window without mutating the main viewer state.
 - The 3D viewer loads the full z-stack in the background, keeps its own channel colors and contrast state, supports `Balanced`, `Volume`, and `Detail` render modes, and now always uses the VTK backend.
 - CZI pyramid-backed 3D volumes now inherit the selected pyramid layer's XY voxel spacing, so downsampled pyramid reads should not look stretched along Z.
 - `Balanced`, `Volume`, and `Detail` now share the same Y-axis orientation instead of rendering upside-down copies of each other.

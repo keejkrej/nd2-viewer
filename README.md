@@ -10,6 +10,7 @@ nd2-viewer is not a qt6 desktop viewer for nd2 but ND^2 (n-dimensional data).
 - Render 8-bit, 16-bit, and 32-bit float image data
 - Toggle channels and adjust per-channel contrast
 - Use percentile-based per-channel live auto contrast with a histogram tuning dialog
+- Run 2D Richardson-Lucy deconvolution previews from the current raw frame
 - Switch between integrated `2D` and `3D` viewer modes for z-stacks from ND2 and CZI files
 - Explore z-stacks in 3D with the VTK-backed viewer, including orbit, zoom, `Reset`, and render-mode switching
 - Keep 3D channel visibility, colors, and live auto contrast independent from the main 2D view
@@ -23,8 +24,8 @@ nd2-viewer is not a qt6 desktop viewer for nd2 but ND^2 (n-dimensional data).
 
 The project supports:
 
-- Windows: `Qt 6.11.0 msvc2022_64` plus the Nikon Windows SDK and VTK
-- macOS Apple Silicon: `Qt 6.11.0` plus the Nikon macOS shared SDK and VTK
+- Windows: `Qt 6.11.0 msvc2022_64` plus the Nikon Windows SDK, VTK, and ITK
+- macOS Apple Silicon: `Qt 6.11.0` plus the Nikon macOS shared SDK, VTK, and ITK
 
 Recommended VTK bootstrap commands:
 
@@ -37,6 +38,7 @@ Before building, make sure the external reader dependencies are present:
 
 - Install Nikon's shared ND2 SDK and point `ND2SDK_ROOT` at it.
 - Build or install VTK before building `nd2-viewer`, then make `VTK_DIR` discoverable to CMake. The 3D viewer now always uses the VTK backend; there is no legacy OpenGL fallback on either Windows or macOS.
+- Install ITK with the `ITKCommon` and `ITKDeconvolution` modules, then make `ITK_DIR` discoverable to CMake. The intended package path is an ITK CMake package directory from a normal ITK install or from vcpkg's `itk` port. FFTW is not required by default.
 - Clone `libCZI` into `third_party/libczi`.
 
 Typical setup commands:
@@ -59,6 +61,7 @@ Current Qt and VTK defaults:
 - macOS Apple Silicon: build or install VTK first. `VTK_DIR` defaults by configuration:
   - Debug: `$HOME/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5`
   - Release: `$HOME/opt/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-release/lib/cmake/vtk-9.5`
+- ITK: set `ITK_DIR` to the directory containing `ITKConfig.cmake`, or pass `-ItkDir` on Windows / `--itk-dir` on macOS.
 
 The build uses the vendored `libCZI` checkout at `third_party/libczi`, so if that directory is missing or empty the configure step will fail until it is cloned there.
 
@@ -151,6 +154,7 @@ The easiest path is:
 The build script enters the Visual Studio build environment for you, configures CMake with the MSVC Qt kit, and builds into `build-msvc-debug` or `build-msvc-release`.
 
 Build or install VTK first. The Windows helper script requires `-Configuration Debug` or `-Configuration Release` and auto-detects the matching config-specific VTK path, or you can still set `VTK_DIR` or pass `-VtkDir`.
+Install ITK first as well. If CMake cannot find it automatically, set `ITK_DIR` or pass `-ItkDir` with the directory containing `ITKConfig.cmake`.
 
 On macOS, the easiest path is:
 
@@ -168,12 +172,13 @@ That script defaults to:
 
 - `Qt6_DIR=$HOME/Qt/6.11.0/macos/lib/cmake/Qt6`
 - `VTK_DIR=$HOME/opt/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`, fallback `$HOME/build/vtk-9.5.2-qt611-<config>/lib/cmake/vtk-9.5`
+- `ITK_DIR` from the environment, or `--itk-dir` when passed explicitly
 - `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8`
 - `build_dir=build-macos-debug` or `build-macos-release`
 - no implicit configuration; `--configuration` is required
 - the build script runs `macdeployqt` after a successful build so the `.app` bundle is directly runnable
 
-If your SDK, Qt, or VTK lives elsewhere, override `ND2SDK_ROOT`, `Qt6_DIR`, or `VTK_DIR` when invoking the script.
+If your SDK, Qt, VTK, or ITK lives elsewhere, override `ND2SDK_ROOT`, `Qt6_DIR`, `VTK_DIR`, or `ITK_DIR` when invoking the script.
 
 To produce a macOS archive package, run:
 
@@ -209,10 +214,11 @@ If you want to run the steps yourself:
 ```powershell
 $vs = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
 $cmake = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
-cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_DIR=C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6 -DVTK_DIR=$env:USERPROFILE/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5 -DND2SDK_ROOT=C:/Program Files/nd2readsdk-shared && `"$cmake`" --build build-msvc-debug --config Debug -j 8"
+cmd.exe /c "`"$vs`" -arch=x64 -host_arch=x64 && `"$cmake`" -S . -B build-msvc-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_DIR=C:/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6 -DVTK_DIR=$env:USERPROFILE/opt/vtk-9.5.2-qt611-debug/lib/cmake/vtk-9.5 -DITK_DIR=<path-to-ITKConfig.cmake-directory> -DND2SDK_ROOT=C:/Program Files/nd2readsdk-shared && `"$cmake`" --build build-msvc-debug --config Debug -j 8"
 ```
 
 If CMake does not already know where VTK is installed on Windows, build/install VTK first and add `-DVTK_DIR=<path-to-VTKConfig.cmake-directory>` to the configure command above.
+If CMake does not already know where ITK is installed, install ITK first and add `-DITK_DIR=<path-to-ITKConfig.cmake-directory>`.
 
 ## Notes
 

@@ -5,7 +5,8 @@ param(
     [string]$BuildDir = "",
     [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
     [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
-    [string]$VtkDir = ""
+    [string]$VtkDir = "",
+    [string]$ItkDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +83,10 @@ if ([string]::IsNullOrWhiteSpace($VtkDir)) {
     }
 }
 
+if ([string]::IsNullOrWhiteSpace($ItkDir) -and $env:ITK_DIR) {
+    $ItkDir = $env:ITK_DIR
+}
+
 if ([string]::IsNullOrWhiteSpace($VtkDir)) {
     $vtkBuildCommand = ".\scripts\build-vtk-msvc.ps1 -Configuration $Configuration"
     throw "VTK_DIR is not set and no matching $Configuration VTK package was found. Run '$vtkBuildCommand' first, or pass -VtkDir explicitly."
@@ -95,7 +100,13 @@ if ($Configuration -eq "Debug" -and -not (Test-DebugVtkExports $VtkDir)) {
     throw "Debug builds require a debug VTK package. '$VtkDir' does not expose VTK debug targets. Run '.\scripts\build-vtk-msvc.ps1 -Configuration Debug' or pass a matching debug -VtkDir."
 }
 
-$configureCommand = @(
+if (![string]::IsNullOrWhiteSpace($ItkDir)) {
+    if (!(Test-Path $ItkDir)) {
+        throw "ITK_DIR not found at '$ItkDir'. Install ITK first, or pass the directory containing ITKConfig.cmake."
+    }
+}
+
+$configureArgs = @(
     "`"$cmake`"",
     "-S", "`"$repoRoot`"",
     "-B", "`"$repoRoot\$BuildDir`"",
@@ -104,7 +115,11 @@ $configureCommand = @(
     "-DQt6_DIR=`"$($qtCmakeDir -replace '\\', '/')`"",
     "-DND2SDK_ROOT=`"$($Nd2SdkRoot -replace '\\', '/')`"",
     "-DVTK_DIR=`"$($VtkDir -replace '\\', '/')`""
-) -join " "
+)
+if (![string]::IsNullOrWhiteSpace($ItkDir)) {
+    $configureArgs += "-DITK_DIR=`"$($ItkDir -replace '\\', '/')`""
+}
+$configureCommand = $configureArgs -join " "
 
 $buildCommand = @(
     "`"$cmake`"",

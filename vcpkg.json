@@ -14,6 +14,7 @@
     },
     "qtmultimedia",
     "qtsvg",
+    "onnxruntime",
     {
       "name": "vtk",
       "default-features": false,

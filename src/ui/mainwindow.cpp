@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDialog>
@@ -553,19 +554,51 @@ namespace
 class DeconvolutionSettingsDialog final : public QDialog
 {
 public:
-    explicit DeconvolutionSettingsDialog(bool hasRoi, QWidget *parent = nullptr)
+    explicit DeconvolutionSettingsDialog(const DocumentInfo &documentInfo,
+                                         const QVector<ChannelRenderSettings> &channelSettings,
+                                         int rawComponentCount,
+                                         bool hasRoi,
+                                         QWidget *parent = nullptr)
         : QDialog(parent)
     {
         setWindowTitle(tr("Deconvolution"));
         setModal(true);
 
         auto *layout = new QVBoxLayout(this);
-        auto *formLayout = new QFormLayout();
+        auto *sharedFormLayout = new QFormLayout();
+
+        channelComboBox_ = new QComboBox(this);
+        const int channelCount = rawComponentCount == 1 ? channelSettings.size()
+                                                        : std::min(rawComponentCount, static_cast<int>(channelSettings.size()));
+        for (int channelIndex = 0; channelIndex < channelCount; ++channelIndex) {
+            QString label;
+            if (channelIndex < documentInfo.channels.size() && !documentInfo.channels.at(channelIndex).name.isEmpty()) {
+                label = documentInfo.channels.at(channelIndex).name;
+            } else {
+                label = tr("Channel %1").arg(channelIndex + 1);
+            }
+            channelComboBox_->addItem(label, channelIndex);
+        }
+        sharedFormLayout->addRow(tr("Channel"), channelComboBox_);
+
+        roiCheckBox_ = new QCheckBox(this);
+        roiCheckBox_->setEnabled(hasRoi);
+        roiCheckBox_->setToolTip(hasRoi
+                                     ? tr("Process only the current ROI.")
+                                     : tr("Draw an ROI before opening this dialog to process only that region."));
+        sharedFormLayout->addRow(tr("ROI"), roiCheckBox_);
+
+        layout->addLayout(sharedFormLayout);
+
+        tabWidget_ = new QTabWidget(this);
+
+        auto *classicalTab = new QWidget(tabWidget_);
+        auto *classicalLayout = new QFormLayout(classicalTab);
 
         iterationsSpin_ = new QSpinBox(this);
         iterationsSpin_->setRange(1, 100);
         iterationsSpin_->setValue(20);
-        formLayout->addRow(tr("Iterations"), iterationsSpin_);
+        classicalLayout->addRow(tr("Iterations"), iterationsSpin_);
 
         sigmaSpin_ = new QDoubleSpinBox(this);
         sigmaSpin_->setRange(0.2, 10.0);
@@ -573,22 +606,25 @@ public:
         sigmaSpin_->setSingleStep(0.1);
         sigmaSpin_->setSuffix(tr(" px"));
         sigmaSpin_->setValue(1.2);
-        formLayout->addRow(tr("Gaussian sigma"), sigmaSpin_);
+        classicalLayout->addRow(tr("Gaussian sigma"), sigmaSpin_);
 
         kernelRadiusSpin_ = new QSpinBox(this);
         kernelRadiusSpin_->setRange(1, 31);
         kernelRadiusSpin_->setValue(5);
         kernelRadiusSpin_->setSuffix(tr(" px"));
-        formLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
+        classicalLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
 
-        roiCheckBox_ = new QCheckBox(this);
-        roiCheckBox_->setEnabled(hasRoi);
-        roiCheckBox_->setToolTip(hasRoi
-                                     ? tr("Crop to the current ROI, with a kernel-radius margin used for deconvolution context.")
-                                     : tr("Draw an ROI before opening this dialog to deconvolve only that region."));
-        formLayout->addRow(tr("ROI"), roiCheckBox_);
+        tabWidget_->addTab(classicalTab, tr("Classical"));
 
-        layout->addLayout(formLayout);
+        auto *deepLearningTab = new QWidget(tabWidget_);
+        auto *deepLearningLayout = new QFormLayout(deepLearningTab);
+        modelPathLabel_ = new QLabel(QDir::toNativeSeparators(DeconvolutionProcessor::defaultDebcrModelPath()), this);
+        modelPathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        modelPathLabel_->setWordWrap(true);
+        deepLearningLayout->addRow(tr("Model"), modelPathLabel_);
+        tabWidget_->addTab(deepLearningTab, tr("Deep Learning"));
+
+        layout->addWidget(tabWidget_);
 
         auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
         buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Run"));
@@ -600,18 +636,24 @@ public:
     [[nodiscard]] DeconvolutionSettings settings() const
     {
         DeconvolutionSettings settings;
+        settings.method = tabWidget_->currentIndex() == 1 ? DeconvolutionMethod::DeepLearning : DeconvolutionMethod::Classical;
+        settings.channelIndex = channelComboBox_->currentData().toInt();
         settings.iterations = iterationsSpin_->value();
         settings.gaussianSigmaPixels = sigmaSpin_->value();
         settings.kernelRadiusPixels = kernelRadiusSpin_->value();
         settings.useRoi = roiCheckBox_->isChecked();
+        settings.modelPath = DeconvolutionProcessor::defaultDebcrModelPath();
         return settings;
     }
 
 private:
+    QComboBox *channelComboBox_ = nullptr;
+    QCheckBox *roiCheckBox_ = nullptr;
+    QTabWidget *tabWidget_ = nullptr;
     QSpinBox *iterationsSpin_ = nullptr;
     QDoubleSpinBox *sigmaSpin_ = nullptr;
     QSpinBox *kernelRadiusSpin_ = nullptr;
-    QCheckBox *roiCheckBox_ = nullptr;
+    QLabel *modelPathLabel_ = nullptr;
 };
 
 class DeconvolutionResultWindow final : public QDialog
@@ -1060,7 +1102,11 @@ void MainWindow::runDeconvolution()
         return;
     }
 
-    DeconvolutionSettingsDialog dialog(imageViewport_->hasRoi(), this);
+    DeconvolutionSettingsDialog dialog(controller_.documentInfo(),
+                                       channelSettings,
+                                       rawFrame.components,
+                                       imageViewport_->hasRoi(),
+                                       this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1075,13 +1121,31 @@ void MainWindow::runDeconvolution()
             return;
         }
     }
+    if (settings.method == DeconvolutionMethod::DeepLearning && !QFileInfo::exists(settings.modelPath)) {
+        QMessageBox::warning(this,
+                             tr("Deconvolution"),
+                             tr("The bundled DeBCR ONNX model was not found at '%1'.").arg(QDir::toNativeSeparators(settings.modelPath)));
+        return;
+    }
+
     const FrameCoordinateState coordinates = controller_.coordinateState();
-    pendingDeconvolutionTitle_ =
-        tr("Deconvolution - %1 - iter %2, sigma %3 px, radius %4 px")
-            .arg(coordinateSummary(controller_.documentInfo(), coordinates))
-            .arg(settings.iterations)
-            .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
-            .arg(settings.kernelRadiusPixels);
+    QString channelLabel = tr("Channel %1").arg(settings.channelIndex + 1);
+    const DocumentInfo documentInfo = controller_.documentInfo();
+    if (settings.channelIndex >= 0 && settings.channelIndex < documentInfo.channels.size()
+        && !documentInfo.channels.at(settings.channelIndex).name.isEmpty()) {
+        channelLabel = documentInfo.channels.at(settings.channelIndex).name;
+    }
+    if (settings.method == DeconvolutionMethod::DeepLearning) {
+        pendingDeconvolutionTitle_ =
+            tr("DeBCR Deconvolution - %1 - %2").arg(coordinateSummary(documentInfo, coordinates), channelLabel);
+    } else {
+        pendingDeconvolutionTitle_ =
+            tr("Deconvolution - %1 - %2 - iter %3, sigma %4 px, radius %5 px")
+                .arg(coordinateSummary(documentInfo, coordinates), channelLabel)
+                .arg(settings.iterations)
+                .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
+                .arg(settings.kernelRadiusPixels);
+    }
     if (settings.useRoi) {
         pendingDeconvolutionTitle_ += tr(" - ROI x%1 y%2 w%3 h%4")
                                           .arg(settings.roiRect.x())
@@ -1092,7 +1156,9 @@ void MainWindow::runDeconvolution()
 
     deconvolutionInProgress_ = true;
     updateDeconvolutionActionState();
-    statusBar()->showMessage(tr("Running 2D deconvolution..."));
+    statusBar()->showMessage(settings.method == DeconvolutionMethod::DeepLearning
+                                 ? tr("Running DeBCR ONNX deconvolution...")
+                                 : tr("Running 2D deconvolution..."));
     setCursor(Qt::BusyCursor);
 
     deconvolutionWatcher_.setFuture(QtConcurrent::run([rawFrame, coordinates, channelSettings, settings]() {

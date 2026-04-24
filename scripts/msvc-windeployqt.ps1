@@ -1,6 +1,7 @@
 # Bundle Qt DLLs next to the MSVC-built nd2-viewer.exe (mirrors scripts/macos-macdeployqt.sh).
 # Invoked from package-msvc.ps1 (and can be run manually after a build).
-# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot "C:\Qt\6.x\msvc2022_64" -ExePath "...\bin\nd2-viewer.exe"
+# QtRoot is the Qt prefix: e.g. vcpkg\installed\x64-windows.
+# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot "C:\Users\you\scoop\apps\vcpkg\current\installed\x64-windows" -ExePath "...\bin\nd2-viewer.exe"
 param(
     [Parameter(Mandatory = $true)]
     [string]$QtRoot,
@@ -68,9 +69,18 @@ function Assert-RequiredRuntimeFiles([string]$TargetDir) {
     }
 }
 
-$windeployqt = Join-Path $QtRoot "bin\windeployqt.exe"
-if (!(Test-Path $windeployqt)) {
-    throw "msvc-windeployqt: windeployqt not found at '$windeployqt'. Check -QtRoot."
+$windeployqt = $null
+foreach ($candidate in @(
+        (Join-Path $QtRoot "tools\Qt6\bin\windeployqt.exe"),
+        (Join-Path $QtRoot "bin\windeployqt.exe")
+    )) {
+    if (Test-Path $candidate) {
+        $windeployqt = $candidate
+        break
+    }
+}
+if ($null -eq $windeployqt) {
+    throw "msvc-windeployqt: windeployqt not found under '$QtRoot' (tried tools\Qt6\bin and bin). Check -QtRoot."
 }
 if (!(Test-Path $ExePath)) {
     throw "msvc-windeployqt: executable not found at '$ExePath'."

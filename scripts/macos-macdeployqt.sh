@@ -22,11 +22,19 @@ else
   exit 1
 fi
 
-qt_lib_dir="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
-qt_prefix="$(cd "$(dirname "$(dirname "$(dirname "${qt6_dir}")")")" && pwd)"
+if [[ "$(basename "$(dirname "${qt6_dir}")")" == "share" ]]; then
+  qt_prefix="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
+  qt_lib_dir="${qt_prefix}/lib"
+else
+  qt_lib_dir="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
+  qt_prefix="$(cd "$(dirname "$(dirname "$(dirname "${qt6_dir}")")")" && pwd)"
+fi
 macdeployqt="${qt_prefix}/bin/macdeployqt"
 if [[ ! -x "${macdeployqt}" ]]; then
-  echo "macos-macdeployqt: macdeployqt not found at ${macdeployqt}" >&2
+  macdeployqt="${qt_prefix}/tools/Qt6/bin/macdeployqt"
+fi
+if [[ ! -x "${macdeployqt}" ]]; then
+  echo "macos-macdeployqt: macdeployqt not found at ${qt_prefix}/bin or ${qt_prefix}/tools/Qt6/bin" >&2
   exit 1
 fi
 

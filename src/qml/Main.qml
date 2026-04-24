@@ -10,7 +10,16 @@ ApplicationWindow {
     height: 920
     visible: true
     title: appController.windowTitle
-    color: "#0f1218"
+    color: windowNeutral
+
+    property color windowNeutral: "#121212"
+    property color surfaceNeutral: "#181818"
+    property color panelNeutral: "#202020"
+    property color elevatedNeutral: "#262626"
+    property color borderNeutral: "#3a3a3a"
+    property color textNeutral: "#e5e5e5"
+    property color textMutedNeutral: "#a3a3a3"
+    property color textDisabledNeutral: "#777777"
 
     menuBar: MenuBar {
         Menu {
@@ -138,10 +147,10 @@ ApplicationWindow {
                 wrapMode: TextEdit.NoWrap
                 text: appController.fileInfoText
                 font.family: "Consolas"
-                color: "#d9dde7"
+                color: window.textNeutral
                 selectedTextColor: "#10131a"
                 selectionColor: "#8ab4ff"
-                background: Rectangle { color: "#151922"; radius: 4 }
+                background: Rectangle { color: window.surfaceNeutral; radius: 4 }
             }
         }
     }
@@ -265,7 +274,7 @@ ApplicationWindow {
             SplitView.preferredWidth: 330
             SplitView.minimumWidth: 280
             padding: 12
-            background: Rectangle { color: "#151922" }
+            background: Rectangle { color: window.surfaceNeutral }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -273,7 +282,7 @@ ApplicationWindow {
 
                 Label {
                     text: appController.infoText
-                    color: "#d9dde7"
+                    color: window.textNeutral
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -281,7 +290,7 @@ ApplicationWindow {
                 GroupBox {
                     Layout.fillWidth: true
                     title: qsTr("Navigation")
-                    background: Rectangle { color: "#1b202b"; border.color: "#2a3140"; radius: 6 }
+                    background: Rectangle { color: window.panelNeutral; border.color: window.borderNeutral; radius: 6 }
                     ColumnLayout {
                         anchors.fill: parent
                         Repeater {
@@ -300,7 +309,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Label {
                                         text: label
-                                        color: locked ? "#7d8798" : "#d9dde7"
+                                        color: locked ? window.textDisabledNeutral : window.textNeutral
                                         Layout.fillWidth: true
                                     }
                                     ToolButton {
@@ -330,7 +339,7 @@ ApplicationWindow {
                                 }
                                 Label {
                                     text: details
-                                    color: "#8c96a8"
+                                    color: window.textMutedNeutral
                                     font.pixelSize: 11
                                 }
                             }
@@ -342,7 +351,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     title: qsTr("Channels")
-                    background: Rectangle { color: "#1b202b"; border.color: "#2a3140"; radius: 6 }
+                    background: Rectangle { color: window.panelNeutral; border.color: window.borderNeutral; radius: 6 }
                     ScrollView {
                         anchors.fill: parent
                         ColumnLayout {
@@ -371,7 +380,7 @@ ApplicationWindow {
                                     required property real lowPercentile
                                     required property real highPercentile
                                     Layout.fillWidth: true
-                                    background: Rectangle { color: "#202633"; border.color: "#30394a"; radius: 6 }
+                                    background: Rectangle { color: window.elevatedNeutral; border.color: window.borderNeutral; radius: 6 }
                                     ColumnLayout {
                                         anchors.fill: parent
                                         RowLayout {
@@ -384,7 +393,7 @@ ApplicationWindow {
                                                 width: 22
                                                 height: 22
                                                 color: model.color
-                                                border.color: "#d9dde7"
+                                                border.color: window.textNeutral
                                                 radius: 3
                                                 MouseArea {
                                                     anchors.fill: parent
@@ -397,7 +406,7 @@ ApplicationWindow {
                                             }
                                             Label {
                                                 text: name
-                                                color: "#d9dde7"
+                                                color: window.textNeutral
                                                 elide: Text.ElideRight
                                                 Layout.fillWidth: true
                                             }
@@ -444,7 +453,7 @@ ApplicationWindow {
         Pane {
             SplitView.fillWidth: true
             padding: 0
-            background: Rectangle { color: "#0f1218" }
+            background: Rectangle { color: window.windowNeutral }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -496,7 +505,7 @@ ApplicationWindow {
                         Label {
                             text: volumeViewport.summary
                             visible: appController.volumeViewActive
-                            color: "#aeb7c8"
+                            color: window.textMutedNeutral
                         }
                     }
                 }

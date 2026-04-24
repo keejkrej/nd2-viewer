@@ -97,10 +97,10 @@ void QuickImageViewport::clearRoi()
 
 void QuickImageViewport::paint(QPainter *painter)
 {
-    painter->fillRect(boundingRect(), QColor(15, 18, 24));
+    painter->fillRect(boundingRect(), QColor(18, 18, 18));
     const QImage &image = activeImage();
     if (image.isNull()) {
-        painter->setPen(QColor(150, 160, 176));
+        painter->setPen(QColor(163, 163, 163));
         painter->drawText(boundingRect(), Qt::AlignCenter, tr("Open an ND2 or CZI file"));
         return;
     }

@@ -58,3 +58,16 @@ default_vcpkg_triplet_macos() {
       ;;
   esac
 }
+
+default_vcpkg_triplet_linux() {
+  local m
+  m="$(uname -m)"
+  case "${m}" in
+    aarch64|arm64) printf '%s' "arm64-linux" ;;
+    x86_64|amd64) printf '%s' "x64-linux" ;;
+    *)
+      echo "Unsupported machine type '${m}' for default vcpkg triplet." >&2
+      exit 1
+      ;;
+  esac
+}

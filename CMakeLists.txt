@@ -37,10 +37,11 @@ if(APPLE)
 elseif(WIN32)
   set(_nd2sdk_root_default "C:/Program Files/nd2readsdk-shared")
 else()
-  set(_nd2sdk_root_default "")
+  set(_nd2sdk_root_default "$ENV{HOME}/Documents/nd2readsdk-shared")
 endif()
 
 set(ND2SDK_ROOT "${_nd2sdk_root_default}" CACHE PATH "Path to the ND2 SDK root.")
+set(ND2SDK_TIFF_LIBRARY "" CACHE FILEPATH "Path to the TIFF library used with the ND2 SDK on Linux when the shared SDK does not provide libtiff.so.")
 set(Qt6_DIR "" CACHE PATH "Path to Qt6Config.cmake (optional; vcpkg toolchain usually supplies Qt).")
 set(VTK_DIR "" CACHE PATH "Path to VTKConfig.cmake (optional; vcpkg toolchain usually supplies VTK).")
 set(ITK_DIR "" CACHE PATH "Path to ITKConfig.cmake (optional; vcpkg toolchain usually supplies ITK).")
@@ -220,11 +221,18 @@ if(ND2VIEWER_USE_SHARED_SDK)
       IMPORTED_LOCATION "${ND2SDK_ROOT}/bin/libtiff.dylib"
     )
   else()
+    if(NOT ND2SDK_TIFF_LIBRARY)
+      if(EXISTS "${ND2SDK_ROOT}/lib/libtiff.so")
+        set(ND2SDK_TIFF_LIBRARY "${ND2SDK_ROOT}/lib/libtiff.so")
+      else()
+        find_library(ND2SDK_TIFF_LIBRARY NAMES tiff REQUIRED)
+      endif()
+    endif()
     set_target_properties(ND2ReadSdk::Reader PROPERTIES
       IMPORTED_LOCATION "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so"
     )
     set_target_properties(ND2ReadSdk::Tiff PROPERTIES
-      IMPORTED_LOCATION "${ND2SDK_ROOT}/lib/libtiff.so"
+      IMPORTED_LOCATION "${ND2SDK_TIFF_LIBRARY}"
     )
   endif()
 else()
@@ -351,6 +359,25 @@ if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
   endforeach()
 endif()
 
+if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
+  file(GLOB ND2_SDK_SHARED_LIBS "${ND2SDK_ROOT}/lib/*.so*")
+  foreach(nd2_sdk_shared_lib IN LISTS ND2_SDK_SHARED_LIBS)
+    add_custom_command(TARGET nd2-viewer POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${nd2_sdk_shared_lib}"
+        "$<TARGET_FILE_DIR:nd2-viewer>"
+    )
+    install(FILES "${nd2_sdk_shared_lib}"
+      DESTINATION "."
+      COMPONENT Runtime
+    )
+  endforeach()
+  set_target_properties(nd2-viewer PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+    INSTALL_RPATH "$ORIGIN"
+  )
+endif()
+
 if(NOT APPLE)
   install(
     DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/"
@@ -425,6 +452,8 @@ if(WIN32)
 elseif(APPLE)
   set(CPACK_GENERATOR "DragNDrop")
   set(CPACK_DMG_VOLUME_NAME "nd2-viewer")
+else()
+  set(CPACK_GENERATOR "TGZ")
 endif()
 
 include(CPack)

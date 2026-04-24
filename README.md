@@ -28,11 +28,13 @@ If you use a symlinked vcpkg location, use the helper scripts or point `VCPKG_RO
 
 - Windows triplet: `x64-windows` (default in `scripts/build-msvc.ps1`)
 - macOS triplet: `arm64-osx` or `x64-osx` (default from `uname -m` in `scripts/build-macos.sh`)
+- Linux triplet: `x64-linux` or `arm64-linux` (default from `uname -m` in `scripts/build-linux.sh`)
 
 Install Nikon's shared ND2 SDK and point `ND2SDK_ROOT` at it:
 
 - Windows: `C:\Program Files\nd2readsdk-shared` (or override)
 - macOS: `$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8` (or override)
+- Linux: `$HOME/Documents/nd2readsdk-shared` (or override)
 
 Install manifest dependencies once (or after changing `vcpkg.json`); the first run can take a long time while VTK and ITK build:
 
@@ -79,6 +81,28 @@ To produce a macOS archive package, run:
 
 That script assumes a completed release build in `build-macos-release` and writes a DMG into `dist` from the already-deployed `.app` bundle.
 
+On Linux, warm up vcpkg deps first, then build:
+
+```bash
+./scripts/install-vcpkg-deps-linux.sh
+./scripts/build-linux.sh --configuration Debug
+```
+
+Defaults when using vcpkg on Linux:
+
+- `build_dir=build-linux-debug` or `build-linux-release`
+- `ND2SDK_ROOT=$HOME/Documents/nd2readsdk-shared`
+- `--configuration` is required
+
+To produce a Linux archive package, run:
+
+```bash
+./scripts/build-linux.sh --configuration Release
+./scripts/package-linux.sh
+```
+
+That script assumes a completed release build in `build-linux-release` and writes a portable archive into `dist`. The default generator is `TGZ`; use `--generator TXZ` or `--generator ZIP` if needed.
+
 ### Build a Windows installer
 
 To produce a Windows installer, build a release tree and package it with CPack:
@@ -122,7 +146,9 @@ Run `windeployqt` from vcpkg's Qt (`installed\x64-windows\tools\Qt6\bin\windeplo
 - The installer bundles the Microsoft VC++ runtime when available through the active MSVC toolchain.
 - `scripts/build-msvc.ps1` is the intended day-to-day build entrypoint on this machine.
 - `scripts/build-macos.sh` is the intended macOS build entrypoint.
+- `scripts/build-linux.sh` is the Linux build entrypoint.
 - `scripts/package-macos.sh` is the macOS packaging entrypoint.
+- `scripts/package-linux.sh` is the Linux packaging entrypoint.
 - `scripts/package-msvc.ps1` is the release packaging entrypoint.
 - On Windows, the project supports only the MSVC Qt toolchain.
 - The current implementation is read-only and focused on core viewing workflows.

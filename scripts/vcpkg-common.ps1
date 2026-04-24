@@ -4,24 +4,39 @@ function Test-VcpkgRoot([string]$Root) {
     return Test-Path (Join-Path $Root "scripts\buildsystems\vcpkg.cmake")
 }
 
+function Resolve-PhysicalPath([string]$Path) {
+    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+    $item = Get-Item -LiteralPath $resolved.ProviderPath -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        $target = $item.Target
+        if ($target -is [array]) {
+            $target = $target[0]
+        }
+        if (-not [string]::IsNullOrWhiteSpace($target)) {
+            return (Resolve-Path -LiteralPath $target -ErrorAction Stop).ProviderPath.TrimEnd('\', '/')
+        }
+    }
+    return $resolved.ProviderPath.TrimEnd('\', '/')
+}
+
 function Resolve-VcpkgRoot {
     param([string]$Explicit)
     if (-not [string]::IsNullOrWhiteSpace($Explicit)) {
-        $r = $Explicit.TrimEnd('\', '/')
+        $r = Resolve-PhysicalPath $Explicit.TrimEnd('\', '/')
         if (-not (Test-VcpkgRoot $r)) {
             throw "Invalid -VcpkgRoot: '$r' (expected scripts\buildsystems\vcpkg.cmake)."
         }
         return $r
     }
     if ($env:VCPKG_ROOT) {
-        $r = $env:VCPKG_ROOT.TrimEnd('\', '/')
+        $r = Resolve-PhysicalPath $env:VCPKG_ROOT.TrimEnd('\', '/')
         if (Test-VcpkgRoot $r) {
             return $r
         }
     }
     $scoopCandidate = Join-Path $env:USERPROFILE "scoop\apps\vcpkg\current"
     if (Test-VcpkgRoot $scoopCandidate) {
-        return $scoopCandidate
+        return Resolve-PhysicalPath $scoopCandidate
     }
     $whereLines = @(& where.exe vcpkg 2>$null)
     foreach ($line in $whereLines) {

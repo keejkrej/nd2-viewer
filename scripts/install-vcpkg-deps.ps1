@@ -19,7 +19,7 @@ Write-Host "vcpkg root: $resolvedVcpkgRoot"
 
 Push-Location $repoRoot
 try {
-    & $vcpkgExe install --triplet $VcpkgTriplet
+    & $vcpkgExe install --triplet $VcpkgTriplet --vcpkg-root $resolvedVcpkgRoot
     if ($LASTEXITCODE -ne 0) {
         throw "vcpkg install failed with exit code $LASTEXITCODE."
     }

@@ -24,6 +24,8 @@ nd2-viewer is not a qt6 desktop viewer for nd2 but ND^2 (n-dimensional data).
 
 Qt, VTK, ITK, and libCZI are pulled in via [vcpkg](https://vcpkg.io/) using the repo `vcpkg.json` manifest. Install vcpkg yourself (on Windows, `scoop install vcpkg` is typical). The build scripts find it via `VCPKG_ROOT`, the Scoop install path, or `vcpkg` on `PATH`.
 
+On Windows with Scoop, use the helper scripts or point `VCPKG_ROOT` at the real version directory under `scoop\apps\vcpkg\<version>`. Qt rejects vcpkg build paths that go through Scoop's `current` junction.
+
 - Windows triplet: `x64-windows` (default in `scripts/build-msvc.ps1`)
 - macOS triplet: `arm64-osx` or `x64-osx` (default from `uname -m` in `scripts/build-macos.sh`)
 

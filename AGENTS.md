@@ -9,7 +9,7 @@
 - The 3D viewer is VTK-backed on both Windows and macOS; VTK is required for configure/build on both platforms.
 - The 2D deconvolution tool uses ITK `ITKCommon` and `ITKDeconvolution`; ITK is required for configure/build on both platforms.
 - The Nikon SDK is not vendored in this repo; install it separately and override `ND2SDK_ROOT` if it is not in the default location.
-- Install vcpkg separately (e.g. Windows: `scoop install vcpkg`). The build scripts locate it via `VCPKG_ROOT`, `%USERPROFILE%\scoop\apps\vcpkg\current`, or `vcpkg` on `PATH` (must resolve to the real tree that contains `scripts/buildsystems/vcpkg.cmake`, not only a shim). They run `vcpkg install` for the manifest, then configure with `CMAKE_TOOLCHAIN_FILE` and `-DVCPKG_TARGET_TRIPLET` (`x64-windows` on Windows; `arm64-osx` / `x64-osx` on macOS by default).
+- Install vcpkg separately (e.g. Windows: `scoop install vcpkg`). The build scripts locate it via `VCPKG_ROOT`, `%USERPROFILE%\scoop\apps\vcpkg\current`, or `vcpkg` on `PATH` (must resolve to the real tree that contains `scripts/buildsystems/vcpkg.cmake`, not only a shim). They normalize Scoop's `current` junction to the real version directory because Qt rejects build paths containing symlinks. They run `vcpkg install` for the manifest, then configure with `CMAKE_TOOLCHAIN_FILE` and `-DVCPKG_TARGET_TRIPLET` (`x64-windows` on Windows; `arm64-osx` / `x64-osx` on macOS by default).
 - Advanced: pass `--qt6-dir` and `--vtk-dir` to `build-macos.sh` only if you want to build against a non-vcpkg Qt/VTK install.
 
 ## Preferred Build And Run Commands

@@ -59,6 +59,6 @@ fi
 echo "vcpkg: installing manifest dependencies (Qt, VTK, ITK, libczi, ...) triplet=${vcpkg_triplet}"
 echo "vcpkg root: ${vcpkg_root}"
 
-(cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}")
+(cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}" --vcpkg-root "${vcpkg_root}")
 
 echo "vcpkg install finished."

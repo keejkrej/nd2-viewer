@@ -3,6 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+overlay_triplets_dir="${script_dir}/vcpkg-triplets"
 # shellcheck source=/dev/null
 source "${script_dir}/vcpkg-common.sh"
 
@@ -185,6 +186,7 @@ else
   cmake_extra+=(
     "-DCMAKE_TOOLCHAIN_FILE=${toolchain_file}"
     "-DVCPKG_TARGET_TRIPLET=${vcpkg_triplet}"
+    "-DVCPKG_OVERLAY_TRIPLETS=${overlay_triplets_dir}"
   )
 fi
 

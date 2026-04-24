@@ -4,6 +4,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
+overlay_triplets_dir="${script_dir}/vcpkg-triplets"
 # shellcheck source=/dev/null
 source "${script_dir}/vcpkg-common.sh"
 
@@ -59,6 +60,6 @@ fi
 echo "vcpkg: installing manifest dependencies (Qt, VTK, ITK, libczi, ...) triplet=${vcpkg_triplet}"
 echo "vcpkg root: ${vcpkg_root}"
 
-(cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}" --vcpkg-root "${vcpkg_root}")
+(cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}" --overlay-triplets "${overlay_triplets_dir}" --vcpkg-root "${vcpkg_root}")
 
 echo "vcpkg install finished."

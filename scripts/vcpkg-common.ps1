@@ -34,17 +34,17 @@ function Resolve-VcpkgRoot {
             return $r
         }
     }
-    $scoopCandidate = Join-Path $env:USERPROFILE "scoop\apps\vcpkg\current"
-    if (Test-VcpkgRoot $scoopCandidate) {
-        return Resolve-PhysicalPath $scoopCandidate
+    $homeCandidate = Join-Path $env:USERPROFILE "vcpkg"
+    if (Test-VcpkgRoot $homeCandidate) {
+        return Resolve-PhysicalPath $homeCandidate
     }
     $whereLines = @(& where.exe vcpkg 2>$null)
     foreach ($line in $whereLines) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $dir = Split-Path -Parent $line
         if (Test-VcpkgRoot $dir) {
-            return $dir
+            return Resolve-PhysicalPath $dir
         }
     }
-    throw "Could not find vcpkg (need scripts\buildsystems\vcpkg.cmake). Install vcpkg (e.g. scoop install vcpkg), add vcpkg to PATH, or set VCPKG_ROOT."
+    throw "Could not find vcpkg (need scripts\buildsystems\vcpkg.cmake). Clone vcpkg to '$env:USERPROFILE\vcpkg', add vcpkg to PATH, or set VCPKG_ROOT."
 }

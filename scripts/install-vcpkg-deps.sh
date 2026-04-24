@@ -18,7 +18,7 @@ Runs vcpkg install for the repo manifest (vcpkg.json). Do this once (or after
 manifest changes) before ./scripts/build-macos.sh.
 
 Options:
-  --vcpkg-root <path>   vcpkg clone root. Default: VCPKG_ROOT or vcpkg on PATH
+  --vcpkg-root <path>   vcpkg clone root. Default: VCPKG_ROOT, ~/vcpkg, or vcpkg on PATH
   --vcpkg-triplet <t>   e.g. arm64-osx or x64-osx. Default: from machine arch
   -h, --help            Show this help text
 EOF

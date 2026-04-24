@@ -13,27 +13,36 @@ require_vcpkg_root() {
   fi
 }
 
+physical_vcpkg_root() {
+  local root="$1"
+  (cd -P "${root}" && pwd)
+}
+
 resolve_vcpkg_root() {
   local explicit="${1:-}"
   if [[ -n "${explicit}" ]]; then
     require_vcpkg_root "${explicit}"
-    printf '%s' "${explicit}"
+    physical_vcpkg_root "${explicit}"
     return 0
   fi
   if [[ -n "${VCPKG_ROOT:-}" ]] && [[ -f "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" ]]; then
-    printf '%s' "${VCPKG_ROOT}"
+    physical_vcpkg_root "${VCPKG_ROOT}"
+    return 0
+  fi
+  if [[ -n "${HOME:-}" ]] && [[ -f "${HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
+    physical_vcpkg_root "${HOME}/vcpkg"
     return 0
   fi
   if command -v vcpkg >/dev/null 2>&1; then
     local _vp _dir
     _vp="$(command -v vcpkg)"
-    _dir="$(cd "$(dirname "${_vp}")" && pwd)"
+    _dir="$(cd -P "$(dirname "${_vp}")" && pwd)"
     if [[ -f "${_dir}/scripts/buildsystems/vcpkg.cmake" ]]; then
       printf '%s' "${_dir}"
       return 0
     fi
   fi
-  echo "Could not find vcpkg. Set VCPKG_ROOT or put a real vcpkg install on PATH (not a shim without the scripts tree)." >&2
+  echo "Could not find vcpkg. Clone vcpkg to ~/vcpkg, set VCPKG_ROOT, or put a real vcpkg install on PATH (not a shim without the scripts tree)." >&2
   exit 1
 }
 

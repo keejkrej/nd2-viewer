@@ -23,7 +23,7 @@ Run ./scripts/install-vcpkg-deps.sh first (or after vcpkg.json changes) to build
 Options:
   --configuration <type>  Required. Supported: Debug, Release
   --build-dir <path>      Build directory relative to the repo root. Default: build-macos-debug or build-macos-release
-  --vcpkg-root <path>     vcpkg clone root (directory containing scripts/buildsystems/vcpkg.cmake). Default: VCPKG_ROOT or vcpkg on PATH
+  --vcpkg-root <path>     vcpkg clone root (directory containing scripts/buildsystems/vcpkg.cmake). Default: VCPKG_ROOT, ~/vcpkg, or vcpkg on PATH
   --vcpkg-triplet <t>     e.g. arm64-osx or x64-osx. Default: from machine arch
   --qt6-dir <path>        Optional. Path to Qt6Config.cmake; if set, skips vcpkg for Qt/VTK/libczi (advanced)
   --vtk-dir <path>        Optional. Only used with --qt6-dir (non-vcpkg VTK)

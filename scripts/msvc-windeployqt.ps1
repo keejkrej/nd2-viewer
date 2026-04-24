@@ -1,7 +1,7 @@
 # Bundle Qt DLLs next to the MSVC-built nd2-viewer.exe (mirrors scripts/macos-macdeployqt.sh).
 # Invoked from package-msvc.ps1 (and can be run manually after a build).
 # QtRoot is the Qt prefix: e.g. vcpkg\installed\x64-windows.
-# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot "C:\Users\you\scoop\apps\vcpkg\current\installed\x64-windows" -ExePath "...\bin\nd2-viewer.exe"
+# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot "C:\Users\you\vcpkg\installed\x64-windows" -ExePath "...\bin\nd2-viewer.exe"
 param(
     [Parameter(Mandatory = $true)]
     [string]$QtRoot,

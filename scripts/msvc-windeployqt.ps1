@@ -1,6 +1,7 @@
 # Bundle Qt DLLs next to the MSVC-built nd2-viewer.exe (mirrors scripts/macos-macdeployqt.sh).
 # Invoked from package-msvc.ps1 (and can be run manually after a build).
-# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot "C:\Qt\6.x\msvc2022_64" -ExePath "...\bin\nd2-viewer.exe"
+# QtRoot is the Qt prefix: e.g. repo\vcpkg_installed\x64-windows.
+# Usage: .\scripts\msvc-windeployqt.ps1 -QtRoot ".\vcpkg_installed\x64-windows" -ExePath "...\bin\nd2-viewer.exe"
 param(
     [Parameter(Mandatory = $true)]
     [string]$QtRoot,
@@ -12,8 +13,12 @@ $ErrorActionPreference = "Stop"
 
 function Get-IcuSourceDirectory([string]$QtRootPath, [string]$WindeployqtPath, [string]$ExecutablePath) {
     $qtBinDir = Join-Path $QtRootPath "bin"
+    $qtDebugBinDir = Join-Path $QtRootPath "debug\bin"
     $candidateDirs = @()
 
+    if (Test-Path $qtDebugBinDir) {
+        $candidateDirs += $qtDebugBinDir
+    }
     if (Test-Path $qtBinDir) {
         $candidateDirs += $qtBinDir
     }
@@ -68,21 +73,81 @@ function Assert-RequiredRuntimeFiles([string]$TargetDir) {
     }
 }
 
-$windeployqt = Join-Path $QtRoot "bin\windeployqt.exe"
-if (!(Test-Path $windeployqt)) {
-    throw "msvc-windeployqt: windeployqt not found at '$windeployqt'. Check -QtRoot."
+function Test-DebugQtDeployment([string]$TargetDir) {
+    return (Test-Path (Join-Path $TargetDir "Qt6Cored.dll")) -or
+        (Test-Path (Join-Path $TargetDir "Qt6Multimediad.dll"))
+}
+
+function Copy-DirectoryContents([string]$SourceDir, [string]$TargetDir) {
+    if (!(Test-Path $SourceDir)) {
+        return
+    }
+
+    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+    Get-ChildItem -LiteralPath $SourceDir -Force | Copy-Item -Destination $TargetDir -Recurse -Force
+}
+
+function Deploy-DebugQtFromVcpkg([string]$QtRootPath, [string]$TargetDir) {
+    $debugQtRoot = Join-Path $QtRootPath "debug\Qt6"
+    $debugBinRoot = Join-Path $QtRootPath "debug\bin"
+    $debugPluginRoot = Join-Path $debugQtRoot "plugins"
+
+    if (!(Test-Path $debugBinRoot)) {
+        throw "msvc-windeployqt: debug Qt bin directory not found at '$debugBinRoot'."
+    }
+    if (!(Test-Path $debugPluginRoot)) {
+        throw "msvc-windeployqt: debug Qt plugin directory not found at '$debugPluginRoot'."
+    }
+
+    Write-Host "msvc-windeployqt: copying debug Qt DLLs from '$debugBinRoot'..."
+    Get-ChildItem -LiteralPath $debugBinRoot -Filter "Qt6*d.dll" -Force |
+        Copy-Item -Destination $TargetDir -Force
+
+    Write-Host "msvc-windeployqt: copying debug Qt plugins from '$debugPluginRoot'..."
+    foreach ($pluginDir in Get-ChildItem -LiteralPath $debugPluginRoot -Directory) {
+        Copy-DirectoryContents -SourceDir $pluginDir.FullName -TargetDir (Join-Path $TargetDir $pluginDir.Name)
+    }
+}
+
+$windeployqt = $null
+foreach ($candidate in @(
+        (Join-Path $QtRoot "tools\Qt6\bin\windeployqt.exe"),
+        (Join-Path $QtRoot "bin\windeployqt.exe")
+    )) {
+    if (Test-Path $candidate) {
+        $windeployqt = $candidate
+        break
+    }
+}
+if ($null -eq $windeployqt) {
+    throw "msvc-windeployqt: windeployqt not found under '$QtRoot' (tried tools\Qt6\bin and bin). Check -QtRoot."
 }
 if (!(Test-Path $ExePath)) {
     throw "msvc-windeployqt: executable not found at '$ExePath'."
 }
 
-Write-Host "msvc-windeployqt: running windeployqt for '$ExePath'..."
-& $windeployqt --no-translations --no-compiler-runtime $ExePath
-if ($LASTEXITCODE -ne 0) {
-    throw "msvc-windeployqt: windeployqt failed with exit code $LASTEXITCODE."
+$targetDir = Split-Path -Parent $ExePath
+$isDebugDeployment = Test-DebugQtDeployment -TargetDir $targetDir
+if ($isDebugDeployment) {
+    Write-Host "msvc-windeployqt: deploying debug Qt runtime for '$ExePath'..."
+    Deploy-DebugQtFromVcpkg -QtRootPath $QtRoot -TargetDir $targetDir
+} else {
+    Write-Host "msvc-windeployqt: running windeployqt for '$ExePath'..."
+    $oldPath = $env:PATH
+    $qtRuntimeBinDir = Join-Path $QtRoot "bin"
+    try {
+        if (Test-Path $qtRuntimeBinDir) {
+            $env:PATH = "$qtRuntimeBinDir;$oldPath"
+        }
+        & $windeployqt --no-translations --no-compiler-runtime --release $ExePath
+    } finally {
+        $env:PATH = $oldPath
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "msvc-windeployqt: windeployqt failed with exit code $LASTEXITCODE."
+    }
 }
 
-$targetDir = Split-Path -Parent $ExePath
 $icuSourceDir = Get-IcuSourceDirectory -QtRootPath $QtRoot -WindeployqtPath $windeployqt -ExecutablePath $ExePath
 Write-Host "msvc-windeployqt: copying ICU runtime from '$icuSourceDir'..."
 Copy-IcuRuntime -SourceDir $icuSourceDir -TargetDir $targetDir

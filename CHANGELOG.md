@@ -2,6 +2,25 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
+## [0.1.8] - 2026-04-24
+
+### Changed
+- Bumped the project version to `0.1.8`.
+- Migrated the build pipeline to vcpkg manifest dependencies for Qt, VTK, ITK, QtSvg, QtMultimedia, and libCZI.
+- Switched CMake from the vendored `third_party/libczi` subdirectory to the vcpkg `libczi::libCZI` package target.
+- Updated Windows and macOS build/deploy scripts to install manifest dependencies, configure with the vcpkg toolchain, and deploy from vcpkg's Qt runtime layout.
+
+### Added
+- Added vcpkg root-resolution helpers and explicit dependency warm-up scripts for Windows and macOS.
+- Added Linux vcpkg build, dependency-install, triplet, and package helper scripts.
+- Added a vcpkg ICU overlay used by the manifest build.
+
+### Removed
+- Removed the standalone VTK and ITK bootstrap scripts now replaced by vcpkg manifest installation.
+
+### Documentation
+- Updated `README.md` and `AGENTS.md` to describe the vcpkg-based dependency flow and the current `0.1.8` packaging output example.
+
 ## [0.1.7] - 2026-04-14
 
 ### Changed

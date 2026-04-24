@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "dependencies": [
+    "itk",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "concurrent",
+        "gui",
+        "opengl",
+        "widgets"
+      ]
+    },
+    "qtmultimedia",
+    "qtsvg",
+    {
+      "name": "vtk",
+      "default-features": false,
+      "features": ["qt", "opengl"]
+    },
+    "libczi"
+  ]
+}

@@ -3,17 +3,16 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration,
     [string]$BuildDir = "",
-    [string]$QtRoot = "C:\Qt\6.11.0\msvc2022_64",
     [string]$Nd2SdkRoot = "C:\Program Files\nd2readsdk-shared",
-    [string]$VtkDir = "",
-    [string]$ItkDir = ""
+    [string]$VcpkgRoot = "",
+    [string]$VcpkgTriplet = "x64-windows"
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "vcpkg-common.ps1")
 $vsDevCmd = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
-$cmake = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
 
 function Get-DefaultBuildDir([string]$ConfigurationName) {
     if ($ConfigurationName -eq "Debug") {
@@ -22,135 +21,129 @@ function Get-DefaultBuildDir([string]$ConfigurationName) {
     return "build-msvc-release"
 }
 
-function Get-DefaultVtkDir([string]$ConfigurationName, [bool]$InstallTree) {
-    $suffix = if ($ConfigurationName -eq "Debug") { "debug" } else { "release" }
-    $root = if ($InstallTree) { "opt" } else { "build" }
-    return Join-Path $HOME "$root\vtk-9.5.2-qt611-$suffix\lib\cmake\vtk-9.5"
-}
-
-function Get-DefaultItkDir([string]$ConfigurationName, [bool]$InstallTree) {
-    $suffix = if ($ConfigurationName -eq "Debug") { "debug" } else { "release" }
-    $root = if ($InstallTree) { "opt" } else { "build" }
-    return Join-Path $HOME "$root\itk-5.4.4-$suffix\lib\cmake\ITK-5.4"
-}
-
-function Move-LegacyReleaseVtkTree([string]$RootName) {
-    $legacyPath = Join-Path $HOME "$RootName\vtk-9.5.2-qt611"
-    $releasePath = Join-Path $HOME "$RootName\vtk-9.5.2-qt611-release"
-    if ((Test-Path $legacyPath) -and -not (Test-Path $releasePath)) {
-        Write-Host "Migrating existing release VTK path '$legacyPath' -> '$releasePath'"
-        Move-Item -LiteralPath $legacyPath -Destination $releasePath
-    } elseif ((Test-Path $legacyPath) -and (Test-Path $releasePath)) {
-        throw "Both legacy and new release VTK paths exist: '$legacyPath' and '$releasePath'. Resolve the duplicate manually before continuing."
+function Resolve-ToolPath([string]$Name, [string]$InstallHint) {
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
     }
+    throw "$Name was not found on PATH. $InstallHint"
 }
 
-function Test-DebugVtkExports([string]$VtkConfigDir) {
-    return Test-Path (Join-Path $VtkConfigDir "VTK-targets-debug.cmake")
+function Reset-BuildDirIfStalePackageCache([string]$BuildPath, [string]$ExpectedPackagePrefix) {
+    $cachePath = Join-Path $BuildPath "CMakeCache.txt"
+    if (!(Test-Path $cachePath)) {
+        return
+    }
+
+    $repoRootFull = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    $buildPathFull = [System.IO.Path]::GetFullPath($BuildPath).TrimEnd('\', '/')
+    if (-not $buildPathFull.StartsWith($repoRootFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove build directory outside repo root: '$buildPathFull'."
+    }
+
+    $expectedPrefixFull = [System.IO.Path]::GetFullPath($ExpectedPackagePrefix).TrimEnd('\', '/')
+    $staleLines = @()
+    foreach ($line in Get-Content -LiteralPath $cachePath) {
+        if ($line -notmatch '^(Qt6[^:]*_DIR|VTK_DIR|ITK_DIR|libCZI_DIR):[^=]*=(?<value>.+)$') {
+            continue
+        }
+
+        $value = $matches.value.Trim()
+        if ([string]::IsNullOrWhiteSpace($value) -or $value.EndsWith("-NOTFOUND")) {
+            continue
+        }
+
+        $normalizedValue = [System.IO.Path]::GetFullPath(($value -replace '/', '\')).TrimEnd('\', '/')
+        if (-not $normalizedValue.StartsWith($expectedPrefixFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $staleLines += $line
+        }
+    }
+
+    if ($staleLines.Count -eq 0) {
+        return
+    }
+
+    Write-Host "Removing stale CMake build directory '$buildPathFull' because it caches non-vcpkg package paths:"
+    $staleLines | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+    Remove-Item -LiteralPath $buildPathFull -Recurse -Force
 }
 
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
     $BuildDir = Get-DefaultBuildDir $Configuration
 }
+$buildPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 
 if (!(Test-Path $vsDevCmd)) {
     throw "VsDevCmd.bat not found at '$vsDevCmd'."
 }
 
-if (!(Test-Path $cmake)) {
-    throw "CMake not found at '$cmake'."
-}
-
-$qtCmakeDir = Join-Path $QtRoot "lib\cmake\Qt6"
-if (!(Test-Path $qtCmakeDir)) {
-    throw "Qt6Config.cmake not found under '$qtCmakeDir'."
-}
+$cmake = Resolve-ToolPath "cmake.exe" "Install CMake, or add an existing CMake install to PATH."
+$ninja = Resolve-ToolPath "ninja.exe" "Install Ninja, or add an existing Ninja install to PATH."
 
 if (!(Test-Path $Nd2SdkRoot)) {
     throw "ND2 SDK root not found at '$Nd2SdkRoot'."
 }
-
-if ($Configuration -eq "Release") {
-    Move-LegacyReleaseVtkTree "opt"
-    Move-LegacyReleaseVtkTree "build"
+$nd2SdkHeader = Join-Path $Nd2SdkRoot "include\Nd2ReadSdk.h"
+$nd2SdkDll = Join-Path $Nd2SdkRoot "bin\nd2readsdk-shared.dll"
+if (!(Test-Path $nd2SdkHeader)) {
+    throw "ND2 SDK header not found at '$nd2SdkHeader'."
+}
+if (!(Test-Path $nd2SdkDll)) {
+    throw "ND2 shared SDK DLL not found at '$nd2SdkDll'."
 }
 
-if ([string]::IsNullOrWhiteSpace($VtkDir)) {
-    if ($env:VTK_DIR) {
-        $VtkDir = $env:VTK_DIR
-    } else {
-        $defaultVtkInstallDir = Get-DefaultVtkDir $Configuration $true
-        $defaultVtkBuildDir = Get-DefaultVtkDir $Configuration $false
-        if (Test-Path $defaultVtkInstallDir) {
-            $VtkDir = $defaultVtkInstallDir
-        } elseif (Test-Path $defaultVtkBuildDir) {
-            $VtkDir = $defaultVtkBuildDir
-        }
-    }
+$resolvedVcpkgRoot = Resolve-VcpkgRoot -Explicit $VcpkgRoot
+$vcpkgExe = Join-Path $resolvedVcpkgRoot "vcpkg.exe"
+if (!(Test-Path $vcpkgExe)) {
+    throw "vcpkg.exe not found at '$vcpkgExe'."
 }
+$toolchainFile = Join-Path $resolvedVcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+$vcpkgInstalledDir = Join-Path $repoRoot "vcpkg_installed"
 
-if ([string]::IsNullOrWhiteSpace($ItkDir)) {
-    if ($env:ITK_DIR) {
-        $ItkDir = $env:ITK_DIR
-    } else {
-        $defaultItkInstallDir = Get-DefaultItkDir $Configuration $true
-        $defaultItkBuildDir = Get-DefaultItkDir $Configuration $false
-        if (Test-Path $defaultItkInstallDir) {
-            $ItkDir = $defaultItkInstallDir
-        } elseif (Test-Path $defaultItkBuildDir) {
-            $ItkDir = $defaultItkBuildDir
-        }
-    }
-}
+$qtRootForDeploy = Join-Path $vcpkgInstalledDir $VcpkgTriplet
 
-if ([string]::IsNullOrWhiteSpace($VtkDir)) {
-    $vtkBuildCommand = ".\scripts\build-vtk-msvc.ps1 -Configuration $Configuration"
-    throw "VTK_DIR is not set and no matching $Configuration VTK package was found. Run '$vtkBuildCommand' first, or pass -VtkDir explicitly."
-}
+$vcpkgInstallCommand = @(
+    "`"$vcpkgExe`"",
+    "install",
+    "--triplet", $VcpkgTriplet,
+    "--vcpkg-root", "`"$resolvedVcpkgRoot`""
+) -join " "
 
-if (!(Test-Path $VtkDir)) {
-    throw "VTK_DIR not found at '$VtkDir'. Build/install VTK first, or pass the directory containing VTKConfig.cmake."
-}
-
-if ($Configuration -eq "Debug" -and -not (Test-DebugVtkExports $VtkDir)) {
-    throw "Debug builds require a debug VTK package. '$VtkDir' does not expose VTK debug targets. Run '.\scripts\build-vtk-msvc.ps1 -Configuration Debug' or pass a matching debug -VtkDir."
-}
-
-if ([string]::IsNullOrWhiteSpace($ItkDir)) {
-    $itkBuildCommand = ".\scripts\build-itk-msvc.ps1 -Configuration $Configuration"
-    throw "ITK_DIR is not set and no matching $Configuration ITK package was found. Run '$itkBuildCommand' first, or pass -ItkDir explicitly."
-}
-
-if (!(Test-Path $ItkDir)) {
-    throw "ITK_DIR not found at '$ItkDir'. Build/install ITK first, or pass the directory containing ITKConfig.cmake."
-}
-
-$configureArgs = @(
+$configureCommand = @(
     "`"$cmake`"",
     "-S", "`"$repoRoot`"",
-    "-B", "`"$repoRoot\$BuildDir`"",
+    "-B", "`"$buildPath`"",
     "-G", "Ninja",
+    "-DCMAKE_MAKE_PROGRAM=`"$($ninja -replace '\\', '/')`"",
     "-DCMAKE_BUILD_TYPE=$Configuration",
-    "-DQt6_DIR=`"$($qtCmakeDir -replace '\\', '/')`"",
-    "-DND2SDK_ROOT=`"$($Nd2SdkRoot -replace '\\', '/')`"",
-    "-DVTK_DIR=`"$($VtkDir -replace '\\', '/')`"",
-    "-DITK_DIR=`"$($ItkDir -replace '\\', '/')`""
-)
-$configureCommand = $configureArgs -join " "
+    "-DCMAKE_TOOLCHAIN_FILE=`"$($toolchainFile -replace '\\', '/')`"",
+    "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet",
+    "-DVCPKG_INSTALLED_DIR=`"$($vcpkgInstalledDir -replace '\\', '/')`"",
+    "-DQt6_DIR:PATH=",
+    "-DVTK_DIR:PATH=",
+    "-DITK_DIR:PATH=",
+    "-DCMAKE_PREFIX_PATH:STRING=",
+    "-DND2SDK_ROOT=`"$($Nd2SdkRoot -replace '\\', '/')`""
+) -join " "
 
 $buildCommand = @(
     "`"$cmake`"",
-    "--build", "`"$repoRoot\$BuildDir`"",
+    "--build", "`"$buildPath`"",
     "--config", $Configuration,
     "-j", "8"
 ) -join " "
 
-$command = "`"$vsDevCmd`" -arch=x64 -host_arch=x64 && $configureCommand && $buildCommand"
+Write-Host "vcpkg: installing manifest dependencies (Qt, VTK, ITK, libczi, ...) triplet=$VcpkgTriplet"
+Write-Host "vcpkg root: $resolvedVcpkgRoot"
+
+Reset-BuildDirIfStalePackageCache -BuildPath $buildPath -ExpectedPackagePrefix $qtRootForDeploy
+
+$command = "`"$vsDevCmd`" -arch=x64 -host_arch=x64 && cd /d `"$repoRoot`" && $vcpkgInstallCommand && $configureCommand && $buildCommand"
 cmd.exe /c $command
 
 if ($LASTEXITCODE -ne 0) {
     throw "MSVC configure/build failed with exit code $LASTEXITCODE."
 }
 
-$exePath = Join-Path $repoRoot "$BuildDir\bin\nd2-viewer.exe"
-& (Join-Path $PSScriptRoot "msvc-windeployqt.ps1") -QtRoot $QtRoot -ExePath $exePath
+$exePath = Join-Path $buildPath "bin\nd2-viewer.exe"
+& (Join-Path $PSScriptRoot "msvc-windeployqt.ps1") -QtRoot $qtRootForDeploy -ExePath $exePath

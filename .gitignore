@@ -1,4 +1,7 @@
 /build-*/
+/vcpkg/
+/vcpkg-tmp/
+/vcpkg_installed/
 /out/
 /dist/
 /.idea/

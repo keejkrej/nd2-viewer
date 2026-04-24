@@ -21,11 +21,19 @@ else
   exit 1
 fi
 
-qt_lib_dir="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
-qt_prefix="$(cd "$(dirname "$(dirname "$(dirname "${qt6_dir}")")")" && pwd)"
+if [[ "$(basename "$(dirname "${qt6_dir}")")" == "share" ]]; then
+  qt_prefix="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
+  qt_lib_dir="${qt_prefix}/lib"
+else
+  qt_lib_dir="$(cd "$(dirname "$(dirname "${qt6_dir}")")" && pwd)"
+  qt_prefix="$(cd "$(dirname "$(dirname "$(dirname "${qt6_dir}")")")" && pwd)"
+fi
 macdeployqt="${qt_prefix}/bin/macdeployqt"
 if [[ ! -x "${macdeployqt}" ]]; then
-  echo "macos-macdeployqt: macdeployqt not found at ${macdeployqt}" >&2
+  macdeployqt="${qt_prefix}/tools/Qt6/bin/macdeployqt"
+fi
+if [[ ! -x "${macdeployqt}" ]]; then
+  echo "macos-macdeployqt: macdeployqt not found at ${qt_prefix}/bin or ${qt_prefix}/tools/Qt6/bin" >&2
   exit 1
 fi
 
@@ -59,7 +67,7 @@ append_libpath "${qt_lib_dir}"
 if command -v brew >/dev/null 2>&1; then
   _hb="$(brew --prefix 2>/dev/null)"
   [[ -n "${_hb}" ]] && append_libpath "${_hb}/lib"
-  for _pkg in qtbase qtsvg qtpdf qtdeclarative qtvirtualkeyboard qtmultimedia qtwebengine; do
+  for _pkg in qtbase qtsvg qtpdf qtmultimedia qtwebengine; do
     _bp="$(brew --prefix "${_pkg}" 2>/dev/null)" || continue
     append_libpath "${_bp}/lib"
   done

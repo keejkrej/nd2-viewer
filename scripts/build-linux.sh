@@ -3,6 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+overlay_triplets_dir="${script_dir}/vcpkg-triplets"
 # shellcheck source=/dev/null
 source "${script_dir}/vcpkg-common.sh"
 
@@ -12,23 +13,23 @@ vcpkg_root="${VCPKG_ROOT:-}"
 vcpkg_triplet=""
 qt6_dir=""
 vtk_dir="${VTK_DIR:-}"
-nd2sdk_root="${ND2SDK_ROOT:-$HOME/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8}"
+nd2sdk_root="${ND2SDK_ROOT:-${HOME}/Documents/nd2readsdk-shared}"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/build-macos.sh --configuration <Debug|Release> [options]
+Usage: ./scripts/build-linux.sh --configuration <Debug|Release> [options]
 
-Configures and builds with the repo vcpkg manifest by default. Qt, VTK, ITK,
-and libCZI are installed or updated as needed before CMake configure.
+Run ./scripts/install-vcpkg-deps-linux.sh first (or after vcpkg.json changes)
+to build Qt/VTK/ITK/libczi.
 
 Options:
   --configuration <type>  Required. Supported: Debug, Release
-  --build-dir <path>      Build directory relative to the repo root. Default: build-macos-debug or build-macos-release
+  --build-dir <path>      Build directory relative to the repo root. Default: build-linux-debug or build-linux-release
   --vcpkg-root <path>     vcpkg clone root (directory containing scripts/buildsystems/vcpkg.cmake). Default: VCPKG_ROOT, ~/vcpkg, or vcpkg on PATH
-  --vcpkg-triplet <t>     e.g. arm64-osx or x64-osx. Default: from machine arch
+  --vcpkg-triplet <t>     e.g. x64-linux or arm64-linux. Default: from machine arch
   --qt6-dir <path>        Optional. Path to Qt6Config.cmake; if set, skips vcpkg for Qt/VTK/libczi (advanced)
   --vtk-dir <path>        Optional. Only used with --qt6-dir (non-vcpkg VTK)
-  --nd2sdk-root <path>    Path to the Nikon macOS shared SDK. Default: ~/Documents/nd2readsdk-shared-1.7.6.0-Macos-armv8
+  --nd2sdk-root <path>    Path to the Nikon Linux SDK root. Default: ND2SDK_ROOT or ~/Documents/nd2readsdk-shared
   -h, --help              Show this help text
 EOF
 }
@@ -70,7 +71,17 @@ detect_parallelism() {
     return 0
   fi
 
-  sysctl -n hw.ncpu
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+    return 0
+  fi
+
+  if command -v getconf >/dev/null 2>&1; then
+    getconf _NPROCESSORS_ONLN
+    return 0
+  fi
+
+  printf '%s' "8"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -134,7 +145,7 @@ case "${configuration}" in
 esac
 
 if [[ -z "${build_dir}" ]]; then
-  build_dir="build-macos-${build_suffix}"
+  build_dir="build-linux-${build_suffix}"
 fi
 
 repo_root="$(cd "${script_dir}/.." && pwd)"
@@ -147,11 +158,22 @@ if [[ ! -f "${nd2sdk_root}/include/Nd2ReadSdk.h" ]]; then
   echo "ND2 SDK header was not found at '${nd2sdk_root}/include/Nd2ReadSdk.h'." >&2
   exit 1
 fi
-if [[ ! -f "${nd2sdk_root}/lib/libnd2readsdk-shared.dylib" ]]; then
-  echo "ND2 shared SDK library was not found at '${nd2sdk_root}/lib/libnd2readsdk-shared.dylib'." >&2
+if [[ ! -f "${nd2sdk_root}/lib/libnd2readsdk-shared.so" ]]; then
+  echo "ND2 shared SDK library was not found at '${nd2sdk_root}/lib/libnd2readsdk-shared.so'." >&2
   exit 1
 fi
 
+if [[ -z "${vcpkg_root}" ]]; then
+  vcpkg_root="$(resolve_vcpkg_root "")"
+else
+  require_vcpkg_root "${vcpkg_root}"
+fi
+
+if [[ -z "${vcpkg_triplet}" ]]; then
+  vcpkg_triplet="$(default_vcpkg_triplet_linux)"
+fi
+
+toolchain_file="${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
 cmake_extra=()
 
 if [[ -n "${qt6_dir}" ]]; then
@@ -159,30 +181,13 @@ if [[ -n "${qt6_dir}" ]]; then
     echo "--vtk-dir is required when using --qt6-dir (non-vcpkg build)." >&2
     exit 1
   fi
-  if [[ "${configuration}" == "Debug" && ! -f "${vtk_dir}/VTK-targets-debug.cmake" ]]; then
-    echo "Debug builds require VTK debug targets at VTK_DIR='${vtk_dir}'." >&2
-    exit 1
-  fi
   cmake_extra+=(-DQt6_DIR="${qt6_dir}" -DVTK_DIR="${vtk_dir}")
 else
-  vcpkg_root="$(resolve_vcpkg_root "${vcpkg_root}")"
-  if [[ -z "${vcpkg_triplet}" ]]; then
-    vcpkg_triplet="$(default_vcpkg_triplet_macos)"
-  fi
-
-  toolchain_file="${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
-  vcpkg_installed_dir="${repo_root}/vcpkg_installed"
-
-  echo "vcpkg: installing manifest dependencies (Qt, VTK, ITK, libczi, ...) triplet=${vcpkg_triplet}"
-  echo "vcpkg root: ${vcpkg_root}"
-  (cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}" --vcpkg-root "${vcpkg_root}")
-
   cmake_extra+=(
     "-DCMAKE_TOOLCHAIN_FILE=${toolchain_file}"
     "-DVCPKG_TARGET_TRIPLET=${vcpkg_triplet}"
-    "-DVCPKG_INSTALLED_DIR=${vcpkg_installed_dir}"
+    "-DVCPKG_OVERLAY_TRIPLETS=${overlay_triplets_dir}"
   )
-  qt6_dir="${vcpkg_installed_dir}/${vcpkg_triplet}/share/Qt6"
 fi
 
 generator="$(resolve_generator)"
@@ -214,10 +219,8 @@ cmake_args=(
 cmake "${cmake_args[@]}"
 cmake --build "${repo_root}/${build_dir}" --parallel "${parallel}"
 
-app_bundle="${repo_root}/${build_dir}/bin/nd2-viewer.app"
-if [[ ! -d "${app_bundle}" ]]; then
-  echo "Expected app bundle was not found at '${app_bundle}' after build." >&2
+exe_path="${repo_root}/${build_dir}/bin/nd2-viewer"
+if [[ ! -x "${exe_path}" ]]; then
+  echo "Expected executable was not found at '${exe_path}' after build." >&2
   exit 1
 fi
-
-bash "${repo_root}/scripts/macos-macdeployqt.sh" "${app_bundle}" "${qt6_dir}"

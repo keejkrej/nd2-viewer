@@ -186,6 +186,13 @@ target_include_directories(nd2-viewer
     "${ND2SDK_ROOT}/include"
 )
 
+get_target_property(ND2VIEWER_LIBCZI_INCLUDE_DIRS libczi::libCZI INTERFACE_INCLUDE_DIRECTORIES)
+foreach(libczi_include_dir IN LISTS ND2VIEWER_LIBCZI_INCLUDE_DIRS)
+  if(EXISTS "${libczi_include_dir}/libCZI/libCZI.h")
+    target_include_directories(nd2-viewer PRIVATE "${libczi_include_dir}/libCZI")
+  endif()
+endforeach()
+
 if(MSVC)
   target_compile_options(nd2-viewer PRIVATE /W4 /permissive- /EHsc)
 else()

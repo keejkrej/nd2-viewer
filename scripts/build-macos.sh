@@ -18,7 +18,8 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/build-macos.sh --configuration <Debug|Release> [options]
 
-Run ./scripts/install-vcpkg-deps.sh first (or after vcpkg.json changes) to build Qt/VTK/ITK/libczi.
+Configures and builds with the repo vcpkg manifest by default. Qt, VTK, ITK,
+and libCZI are installed or updated as needed before CMake configure.
 
 Options:
   --configuration <type>  Required. Supported: Debug, Release
@@ -61,6 +62,15 @@ reset_build_dir_for_generator_switch() {
   local candidate_build_dir="$1"
 
   rm -rf "${candidate_build_dir}"
+}
+
+detect_parallelism() {
+  if [[ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]]; then
+    printf '%s' "${CMAKE_BUILD_PARALLEL_LEVEL}"
+    return 0
+  fi
+
+  sysctl -n hw.ncpu
 }
 
 while [[ $# -gt 0 ]]; do
@@ -129,17 +139,19 @@ fi
 
 repo_root="$(cd "${script_dir}/.." && pwd)"
 
-if [[ -z "${vcpkg_root}" ]]; then
-  vcpkg_root="$(resolve_vcpkg_root "")"
-else
-  require_vcpkg_root "${vcpkg_root}"
+if [[ ! -d "${nd2sdk_root}" ]]; then
+  echo "ND2 SDK root was not found at '${nd2sdk_root}'." >&2
+  exit 1
+fi
+if [[ ! -f "${nd2sdk_root}/include/Nd2ReadSdk.h" ]]; then
+  echo "ND2 SDK header was not found at '${nd2sdk_root}/include/Nd2ReadSdk.h'." >&2
+  exit 1
+fi
+if [[ ! -f "${nd2sdk_root}/lib/libnd2readsdk-shared.dylib" ]]; then
+  echo "ND2 shared SDK library was not found at '${nd2sdk_root}/lib/libnd2readsdk-shared.dylib'." >&2
+  exit 1
 fi
 
-if [[ -z "${vcpkg_triplet}" ]]; then
-  vcpkg_triplet="$(default_vcpkg_triplet_macos)"
-fi
-
-toolchain_file="${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
 cmake_extra=()
 
 if [[ -n "${qt6_dir}" ]]; then
@@ -153,11 +165,24 @@ if [[ -n "${qt6_dir}" ]]; then
   fi
   cmake_extra+=(-DQt6_DIR="${qt6_dir}" -DVTK_DIR="${vtk_dir}")
 else
+  vcpkg_root="$(resolve_vcpkg_root "${vcpkg_root}")"
+  if [[ -z "${vcpkg_triplet}" ]]; then
+    vcpkg_triplet="$(default_vcpkg_triplet_macos)"
+  fi
+
+  toolchain_file="${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
+  vcpkg_installed_dir="${repo_root}/vcpkg_installed"
+
+  echo "vcpkg: installing manifest dependencies (Qt, VTK, ITK, libczi, ...) triplet=${vcpkg_triplet}"
+  echo "vcpkg root: ${vcpkg_root}"
+  (cd "${repo_root}" && "${vcpkg_root}/vcpkg" install --triplet "${vcpkg_triplet}" --vcpkg-root "${vcpkg_root}")
+
   cmake_extra+=(
     "-DCMAKE_TOOLCHAIN_FILE=${toolchain_file}"
     "-DVCPKG_TARGET_TRIPLET=${vcpkg_triplet}"
+    "-DVCPKG_INSTALLED_DIR=${vcpkg_installed_dir}"
   )
-  qt6_dir="${vcpkg_root}/installed/${vcpkg_triplet}/share/Qt6"
+  qt6_dir="${vcpkg_installed_dir}/${vcpkg_triplet}/share/Qt6"
 fi
 
 generator="$(resolve_generator)"
@@ -175,7 +200,7 @@ if [[ -n "${cached_generator}" && "${cached_generator}" != "${generator}" ]]; th
   fi
 fi
 
-parallel="${CMAKE_BUILD_PARALLEL_LEVEL:-$(sysctl -n hw.ncpu)}"
+parallel="$(detect_parallelism)"
 
 cmake_args=(
   -S "${repo_root}"

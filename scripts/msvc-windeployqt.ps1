@@ -87,15 +87,32 @@ function Copy-DirectoryContents([string]$SourceDir, [string]$TargetDir) {
     Get-ChildItem -LiteralPath $SourceDir -Force | Copy-Item -Destination $TargetDir -Recurse -Force
 }
 
+function Write-QtConf([string]$TargetDir) {
+    @"
+[Paths]
+Prefix=.
+Plugins=.
+QmlImports=qml
+"@ | Set-Content -LiteralPath (Join-Path $TargetDir "qt.conf") -Encoding ASCII
+}
+
 function Deploy-DebugQtFromVcpkg([string]$QtRootPath, [string]$TargetDir) {
     $debugQtRoot = Join-Path $QtRootPath "debug\Qt6"
+    $debugBinRoot = Join-Path $QtRootPath "debug\bin"
     $debugPluginRoot = Join-Path $debugQtRoot "plugins"
     $debugQmlRoot = Join-Path $debugQtRoot "qml"
     $debugVtkQmlRoot = Join-Path $QtRootPath "debug\qml"
 
+    if (!(Test-Path $debugBinRoot)) {
+        throw "msvc-windeployqt: debug Qt bin directory not found at '$debugBinRoot'."
+    }
     if (!(Test-Path $debugPluginRoot)) {
         throw "msvc-windeployqt: debug Qt plugin directory not found at '$debugPluginRoot'."
     }
+
+    Write-Host "msvc-windeployqt: copying debug Qt DLLs from '$debugBinRoot'..."
+    Get-ChildItem -LiteralPath $debugBinRoot -Filter "Qt6*d.dll" -Force |
+        Copy-Item -Destination $TargetDir -Force
 
     Write-Host "msvc-windeployqt: copying debug Qt plugins from '$debugPluginRoot'..."
     foreach ($pluginDir in Get-ChildItem -LiteralPath $debugPluginRoot -Directory) {
@@ -106,12 +123,7 @@ function Deploy-DebugQtFromVcpkg([string]$QtRootPath, [string]$TargetDir) {
     Copy-DirectoryContents -SourceDir $debugQmlRoot -TargetDir (Join-Path $TargetDir "qml")
     Copy-DirectoryContents -SourceDir $debugVtkQmlRoot -TargetDir (Join-Path $TargetDir "qml")
 
-    @"
-[Paths]
-Prefix=.
-Plugins=.
-QmlImports=qml
-"@ | Set-Content -LiteralPath (Join-Path $TargetDir "qt.conf") -Encoding ASCII
+    Write-QtConf -TargetDir $TargetDir
 }
 
 $windeployqt = $null
@@ -153,6 +165,7 @@ if ($isDebugDeployment) {
     if ($LASTEXITCODE -ne 0) {
         throw "msvc-windeployqt: windeployqt failed with exit code $LASTEXITCODE."
     }
+    Write-QtConf -TargetDir $targetDir
 }
 
 $icuSourceDir = Get-IcuSourceDirectory -QtRootPath $QtRoot -WindeployqtPath $windeployqt -ExecutablePath $ExePath

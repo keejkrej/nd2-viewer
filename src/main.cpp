@@ -1,4 +1,6 @@
-#include "ui/mainwindow.h"
+#include "qml/qmldocumentcontroller.h"
+#include "qml/quickimageviewport.h"
+#include "qml/quickvolumeviewport3d.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -9,12 +11,14 @@
 #include <QMessageLogContext>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QQuickStyle>
 #include <QStandardPaths>
-#include <QSurfaceFormat>
 
 #include <algorithm>
 
-#include <QVTKOpenGLNativeWidget.h>
+#include <QQuickVTKItem.h>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -133,9 +137,7 @@ void setupLogging()
 
 int main(int argc, char *argv[])
 {
-    QSurfaceFormat format = QVTKOpenGLNativeWidget::defaultFormat();
-    format.setDepthBufferSize(std::max(format.depthBufferSize(), 24));
-    QSurfaceFormat::setDefaultFormat(format);
+    QQuickVTKItem::setGraphicsApi();
 
     forceQtPluginPathsToActiveQt();
 
@@ -143,6 +145,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName(QStringLiteral("nd2-viewer"));
     QApplication::setOrganizationName(QStringLiteral("nd2-viewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));
+    QQuickStyle::setStyle(QStringLiteral("Fusion"));
     setupLogging();
     preferQtFfmpegMediaBackendIfAvailable();
 
@@ -157,8 +160,16 @@ int main(int argc, char *argv[])
     qRegisterMetaType<RenderedFrame>();
     qRegisterMetaType<MetadataSection>();
 
-    MainWindow window;
-    window.show();
+    qmlRegisterType<QuickImageViewport>("Nd2Viewer", 1, 0, "QuickImageViewport");
+    qmlRegisterType<QuickVolumeViewport3D>("Nd2Viewer", 1, 0, "QuickVolumeViewport3D");
+
+    QmlDocumentController controller;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("appController"), &controller);
+    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() {
+        QCoreApplication::exit(-1);
+    }, Qt::QueuedConnection);
+    engine.load(QUrl(QStringLiteral("qrc:/Nd2Viewer/src/qml/Main.qml")));
 
     return app.exec();
 }

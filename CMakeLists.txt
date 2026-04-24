@@ -114,7 +114,7 @@ if(ITK_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${ITK_DIR}")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets Qml Quick QuickControls2 QuickDialogs2)
 find_package(ITK REQUIRED COMPONENTS ITKCommon ITKDeconvolution)
 include(${ITK_USE_FILE})
 find_package(VTK CONFIG REQUIRED COMPONENTS
@@ -122,6 +122,7 @@ find_package(VTK CONFIG REQUIRED COMPONENTS
   CommonDataModel
   InteractionStyle
   GUISupportQt
+  GUISupportQtQuick
   RenderingCore
   RenderingOpenGL2
   RenderingVolume
@@ -146,6 +147,7 @@ set(ND2VIEWER_VTK_LIBS
   VTK::CommonDataModel
   VTK::InteractionStyle
   VTK::GUISupportQt
+  VTK::GUISupportQtQuick
   VTK::RenderingCore
   VTK::RenderingOpenGL2
   VTK::RenderingVolume
@@ -196,6 +198,16 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/volumeloader.h
   src/core/volumeutils.cpp
   src/core/volumeutils.h
+  src/qml/channellistmodel.cpp
+  src/qml/channellistmodel.h
+  src/qml/looplistmodel.cpp
+  src/qml/looplistmodel.h
+  src/qml/qmldocumentcontroller.cpp
+  src/qml/qmldocumentcontroller.h
+  src/qml/quickimageviewport.cpp
+  src/qml/quickimageviewport.h
+  src/qml/quickvolumeviewport3d.cpp
+  src/qml/quickvolumeviewport3d.h
   src/ui/autocontrasttuningdialog.cpp
   src/ui/autocontrasttuningdialog.h
   src/ui/channelcontrolswidget.cpp
@@ -209,6 +221,13 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/ui/volumeviewport3d.h
   src/ui/volumeviewport3d_vtk.cpp
   src/ui/volumeviewport3d_vtk.h
+)
+
+qt_add_qml_module(nd2-viewer
+  URI Nd2Viewer
+  VERSION 1.0
+  QML_FILES
+    src/qml/Main.qml
 )
 
 if(WIN32)
@@ -310,6 +329,10 @@ target_link_libraries(nd2-viewer
     Qt6::Multimedia
     Qt6::OpenGL
     Qt6::OpenGLWidgets
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::QuickDialogs2
     Qt6::Widgets
     libCZI
     ND2ReadSdk::Reader

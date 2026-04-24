@@ -77,7 +77,9 @@ if (!(Test-Path $ExePath)) {
 }
 
 Write-Host "msvc-windeployqt: running windeployqt for '$ExePath'..."
-& $windeployqt --no-translations --no-compiler-runtime $ExePath
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$qmlDir = Join-Path $repoRoot "src\qml"
+& $windeployqt --no-translations --no-compiler-runtime --qmldir $qmlDir $ExePath
 if ($LASTEXITCODE -ne 0) {
     throw "msvc-windeployqt: windeployqt failed with exit code $LASTEXITCODE."
 }

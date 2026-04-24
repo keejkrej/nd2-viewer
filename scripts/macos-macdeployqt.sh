@@ -6,6 +6,7 @@ set -euo pipefail
 
 app_bundle="$1"
 qt6_dir="$2"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [[ ! -d "${app_bundle}" ]]; then
   echo "macos-macdeployqt: app bundle not found: ${app_bundle}" >&2
@@ -54,6 +55,7 @@ macdeployqt_args=(
   -always-overwrite
   -no-strip
   -no-codesign
+  -qmldir="${repo_root}/src/qml"
 )
 append_libpath "${qt_lib_dir}"
 if command -v brew >/dev/null 2>&1; then

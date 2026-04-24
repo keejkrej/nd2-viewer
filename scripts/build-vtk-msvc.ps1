@@ -119,6 +119,7 @@ $moduleArgs = @(
     "-DVTK_MODULE_ENABLE_VTK_CommonDataModel=YES",
     "-DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES",
     "-DVTK_MODULE_ENABLE_VTK_GUISupportQt=YES",
+    "-DVTK_MODULE_ENABLE_VTK_GUISupportQtQuick=YES",
     "-DVTK_MODULE_ENABLE_VTK_RenderingCore=YES",
     "-DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=YES",
     "-DVTK_MODULE_ENABLE_VTK_RenderingVolume=YES",

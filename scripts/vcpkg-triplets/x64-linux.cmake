@@ -5,5 +5,5 @@ if(PORT STREQUAL "liblzma")
 endif()
 
 if(PORT STREQUAL "minc")
-  string(APPEND VCPKG_C_FLAGS " -std=gnu17")
+  list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS -DCMAKE_C_STANDARD=17)
 endif()

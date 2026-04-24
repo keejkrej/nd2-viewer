@@ -3,6 +3,7 @@
 #include "core/documenttypes.h"
 
 #include <QImage>
+#include <QRect>
 #include <QString>
 #include <QVector>
 
@@ -11,6 +12,8 @@ struct DeconvolutionSettings
     int iterations = 20;
     double gaussianSigmaPixels = 1.2;
     int kernelRadiusPixels = 5;
+    bool useRoi = false;
+    QRect roiRect;
 };
 
 struct DeconvolutionResult

@@ -11,6 +11,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDialog>
@@ -552,7 +553,7 @@ namespace
 class DeconvolutionSettingsDialog final : public QDialog
 {
 public:
-    explicit DeconvolutionSettingsDialog(QWidget *parent = nullptr)
+    explicit DeconvolutionSettingsDialog(bool hasRoi, QWidget *parent = nullptr)
         : QDialog(parent)
     {
         setWindowTitle(tr("Deconvolution"));
@@ -580,6 +581,13 @@ public:
         kernelRadiusSpin_->setSuffix(tr(" px"));
         formLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
 
+        roiCheckBox_ = new QCheckBox(this);
+        roiCheckBox_->setEnabled(hasRoi);
+        roiCheckBox_->setToolTip(hasRoi
+                                     ? tr("Crop to the current ROI, with a kernel-radius margin used for deconvolution context.")
+                                     : tr("Draw an ROI before opening this dialog to deconvolve only that region."));
+        formLayout->addRow(tr("ROI"), roiCheckBox_);
+
         layout->addLayout(formLayout);
 
         auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -595,6 +603,7 @@ public:
         settings.iterations = iterationsSpin_->value();
         settings.gaussianSigmaPixels = sigmaSpin_->value();
         settings.kernelRadiusPixels = kernelRadiusSpin_->value();
+        settings.useRoi = roiCheckBox_->isChecked();
         return settings;
     }
 
@@ -602,6 +611,7 @@ private:
     QSpinBox *iterationsSpin_ = nullptr;
     QDoubleSpinBox *sigmaSpin_ = nullptr;
     QSpinBox *kernelRadiusSpin_ = nullptr;
+    QCheckBox *roiCheckBox_ = nullptr;
 };
 
 class DeconvolutionResultWindow final : public QDialog
@@ -668,21 +678,20 @@ public:
     MovieExportDialog(const MovieExportSettings &baseSettings,
                       const QImage &sampleImage,
                       int timeLoopSize,
-                      bool exportRoi,
+                      const QRect &availableRoi,
                       QWidget *parent = nullptr)
         : QDialog(parent)
         , baseSettings_(baseSettings)
         , sampleImage_(sampleImage)
         , timeLoopSize_(timeLoopSize)
+        , availableRoi_(availableRoi)
     {
-        setWindowTitle(exportRoi ? tr("Export ROI Movie") : tr("Export Movie"));
+        setWindowTitle(tr("Export Movie"));
         setModal(true);
         resize(560, 0);
 
         auto *layout = new QVBoxLayout(this);
-        auto *intro = new QLabel(exportRoi
-                                     ? tr("Export the current ROI as a rendered MP4. Start, end, and step apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed.")
-                                     : tr("Export the current rendered frame view as an MP4. Start, end, and step apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed."),
+        auto *intro = new QLabel(tr("Export the current rendered frame view as an MP4. Start, end, and step apply only to the time axis using 0-based frame numbers; all other loop coordinates stay fixed."),
                                  this);
         intro->setWordWrap(true);
         layout->addWidget(intro);
@@ -710,6 +719,13 @@ public:
         fpsSpin_->setSingleStep(1.0);
         fpsSpin_->setValue(baseSettings_.fps);
         formLayout->addRow(tr("FPS"), fpsSpin_);
+
+        roiCheckBox_ = new QCheckBox(this);
+        roiCheckBox_->setEnabled(availableRoi_.isValid() && !availableRoi_.isEmpty());
+        roiCheckBox_->setToolTip(roiCheckBox_->isEnabled()
+                                     ? tr("Crop the exported movie to the current ROI.")
+                                     : tr("Draw an ROI before opening this dialog to export only that region."));
+        formLayout->addRow(tr("ROI"), roiCheckBox_);
 
         outputSizeLabel_ = new QLabel(this);
         frameCountLabel_ = new QLabel(this);
@@ -753,6 +769,7 @@ public:
         });
         connect(stepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this]() { scheduleEstimateRefresh(); });
         connect(fpsSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]() { scheduleEstimateRefresh(); });
+        connect(roiCheckBox_, &QCheckBox::toggled, this, [this]() { scheduleEstimateRefresh(); });
 
         refreshEstimate();
     }
@@ -764,6 +781,13 @@ public:
         settings.endFrame = endFrameSpin_->value();
         settings.step = stepSpin_->value();
         settings.fps = fpsSpin_->value();
+        if (roiCheckBox_->isChecked() && availableRoi_.isValid() && !availableRoi_.isEmpty()) {
+            settings.roiRect = availableRoi_;
+            settings.outputSize = availableRoi_.size();
+        } else {
+            settings.roiRect = {};
+            settings.outputSize = sampleImage_.size();
+        }
         return settings;
     }
 
@@ -776,7 +800,7 @@ private:
     void refreshEstimate()
     {
         const MovieExportSettings settings = currentSettings();
-        currentEstimate_ = estimateMovieExport(settings, sampleImage_);
+        currentEstimate_ = estimateMovieExport(settings, sampleImageForSettings(settings));
 
         outputSizeLabel_->setText(settings.outputSize.isValid()
                                       ? tr("%1 × %2").arg(settings.outputSize.width()).arg(settings.outputSize.height())
@@ -797,6 +821,15 @@ private:
         updateContinueEnabled();
     }
 
+    [[nodiscard]] QImage sampleImageForSettings(const MovieExportSettings &settings) const
+    {
+        if (settings.roiRect.isValid() && !settings.roiRect.isEmpty()) {
+            return sampleImage_.copy(settings.roiRect);
+        }
+
+        return sampleImage_;
+    }
+
     void scheduleEstimateRefresh()
     {
         if (estimateDebounceTimer_) {
@@ -812,10 +845,12 @@ private:
     MovieExportSettings baseSettings_;
     QImage sampleImage_;
     int timeLoopSize_ = 0;
+    QRect availableRoi_;
     QSpinBox *startFrameSpin_ = nullptr;
     QSpinBox *endFrameSpin_ = nullptr;
     QSpinBox *stepSpin_ = nullptr;
     QDoubleSpinBox *fpsSpin_ = nullptr;
+    QCheckBox *roiCheckBox_ = nullptr;
     QLabel *outputSizeLabel_ = nullptr;
     QLabel *frameCountLabel_ = nullptr;
     QLabel *durationLabel_ = nullptr;
@@ -853,9 +888,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(imageViewport_, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updateHoveredPixel);
     connect(imageViewport_, &ImageViewport::saveImageRequested, this, &MainWindow::saveCurrentFrameAs);
-    connect(imageViewport_, &ImageViewport::exportRoiRequested, this, &MainWindow::saveCurrentRoiAs);
     connect(imageViewport_, &ImageViewport::exportMovieRequested, this, &MainWindow::exportMovieAs);
-    connect(imageViewport_, &ImageViewport::exportRoiMovieRequested, this, &MainWindow::exportRoiMovieAs);
 
     connect(channelControlsWidget_, &ChannelControlsWidget::channelSettingsChanged,
             &controller_, qOverload<int, const ChannelRenderSettings &>(&DocumentController::setChannelSettings));
@@ -981,11 +1014,6 @@ void MainWindow::saveCurrentFrameAs()
     exportCurrentSelection(ExportScope::Frame);
 }
 
-void MainWindow::saveCurrentRoiAs()
-{
-    exportCurrentSelection(ExportScope::Roi);
-}
-
 void MainWindow::exportMovieAs()
 {
     if (isVolumeViewActive()) {
@@ -994,11 +1022,6 @@ void MainWindow::exportMovieAs()
     }
 
     exportMovieSelection(ExportScope::Frame);
-}
-
-void MainWindow::exportRoiMovieAs()
-{
-    exportMovieSelection(ExportScope::Roi);
 }
 
 void MainWindow::runDeconvolution()
@@ -1037,12 +1060,21 @@ void MainWindow::runDeconvolution()
         return;
     }
 
-    DeconvolutionSettingsDialog dialog(this);
+    DeconvolutionSettingsDialog dialog(imageViewport_->hasRoi(), this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
 
-    const DeconvolutionSettings settings = dialog.settings();
+    DeconvolutionSettings settings = dialog.settings();
+    if (settings.useRoi) {
+        settings.roiRect = imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height));
+        if (!settings.roiRect.isValid() || settings.roiRect.isEmpty()) {
+            QMessageBox::warning(this,
+                                 tr("Deconvolution"),
+                                 tr("The current ROI is outside the available frame."));
+            return;
+        }
+    }
     const FrameCoordinateState coordinates = controller_.coordinateState();
     pendingDeconvolutionTitle_ =
         tr("Deconvolution - %1 - iter %2, sigma %3 px, radius %4 px")
@@ -1050,6 +1082,13 @@ void MainWindow::runDeconvolution()
             .arg(settings.iterations)
             .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
             .arg(settings.kernelRadiusPixels);
+    if (settings.useRoi) {
+        pendingDeconvolutionTitle_ += tr(" - ROI x%1 y%2 w%3 h%4")
+                                          .arg(settings.roiRect.x())
+                                          .arg(settings.roiRect.y())
+                                          .arg(settings.roiRect.width())
+                                          .arg(settings.roiRect.height());
+    }
 
     deconvolutionInProgress_ = true;
     updateDeconvolutionActionState();
@@ -1218,12 +1257,13 @@ void MainWindow::exportCurrentSelection(ExportScope scope)
     if (currentImage.isNull() || !rawFrame.isValid()) {
         return;
     }
-    if (scope == ExportScope::Roi && !imageViewport_->hasRoi()) {
+    const FrameExportOptions options = promptForFrameExportOptions();
+    const ExportMode mode = options.mode;
+    if (mode == ExportMode::Cancelled) {
         return;
     }
-
-    const ExportMode mode = promptForExportMode(scope);
-    if (mode == ExportMode::Cancelled) {
+    scope = options.scope;
+    if (scope == ExportScope::Roi && !imageViewport_->hasRoi()) {
         return;
     }
 
@@ -1315,10 +1355,6 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     if (currentImage.isNull() || !rawFrame.isValid()) {
         return;
     }
-    if (scope == ExportScope::Roi && !imageViewport_->hasRoi()) {
-        return;
-    }
-
     const int timeLoopIndex = findTimeLoopIndex();
     if (timeLoopIndex < 0) {
         QMessageBox::information(this,
@@ -1333,27 +1369,24 @@ void MainWindow::exportMovieSelection(ExportScope scope)
     settings.channelSettings = controller_.channelSettings();
     settings.liveAutoEnabled = controller_.liveAutoEnabled();
     settings.timeLoopIndex = timeLoopIndex;
-    settings.outputSize = scope == ExportScope::Roi && imageViewport_->hasRoi()
-                              ? imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height)).size()
-                              : QSize(rawFrame.width, rawFrame.height);
-    settings.roiRect = scope == ExportScope::Roi ? imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height))
-                                                 : QRect();
+    settings.outputSize = QSize(rawFrame.width, rawFrame.height);
     settings.fps = 10.0;
-    const QImage sampleImage = (scope == ExportScope::Roi && settings.roiRect.isValid() && !settings.roiRect.isEmpty())
-                                   ? currentImage.copy(settings.roiRect)
-                                   : currentImage;
+    const QRect availableRoi = imageViewport_->hasRoi()
+                                   ? imageViewport_->roiRect().intersected(QRect(0, 0, rawFrame.width, rawFrame.height))
+                                   : QRect();
 
     const LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
     MovieExportDialog dialog(settings,
-                             sampleImage,
+                             currentImage,
                              timeLoop.size,
-                             scope == ExportScope::Roi,
+                             availableRoi,
                              this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
 
     settings = dialog.currentSettings();
+    scope = settings.roiRect.isValid() && !settings.roiRect.isEmpty() ? ExportScope::Roi : ExportScope::Frame;
     QString selectedPath = QFileDialog::getSaveFileName(this,
                                                         tr("Save Movie"),
                                                         buildDefaultMovieSavePath(scope, settings),
@@ -1457,7 +1490,7 @@ void MainWindow::exportVolumeMovie()
     settings.fps = 10.0;
 
     const LoopInfo &timeLoop = controller_.documentInfo().loops.at(timeLoopIndex);
-    MovieExportDialog dialog(settings, sampleImage, timeLoop.size, false, this);
+    MovieExportDialog dialog(settings, sampleImage, timeLoop.size, {}, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1643,12 +1676,6 @@ void MainWindow::buildMenus()
 
     auto *exportMovieAction = exportMenu->addAction(tr("Movie..."));
     connect(exportMovieAction, &QAction::triggered, this, &MainWindow::exportMovieAs);
-
-    auto *exportCurrentRoiAction = exportMenu->addAction(tr("ROI Frame..."));
-    connect(exportCurrentRoiAction, &QAction::triggered, this, &MainWindow::saveCurrentRoiAs);
-
-    auto *exportRoiMovieAction = exportMenu->addAction(tr("ROI Movie..."));
-    connect(exportRoiMovieAction, &QAction::triggered, this, &MainWindow::exportRoiMovieAs);
 
     fileMenu->addSeparator();
     quitAction_ = fileMenu->addAction(tr("E&xit"));
@@ -2033,22 +2060,27 @@ void MainWindow::completeTimePlaybackStep()
     }
 }
 
-MainWindow::ExportMode MainWindow::promptForExportMode(ExportScope scope) const
+MainWindow::FrameExportOptions MainWindow::promptForFrameExportOptions() const
 {
+    FrameExportOptions options;
+
     QDialog dialog(const_cast<MainWindow *>(this));
-    dialog.setWindowTitle(scope == ExportScope::Roi ? tr("Export Current ROI") : tr("Export Current Frame"));
+    dialog.setWindowTitle(tr("Export Current Frame"));
 
     auto *layout = new QVBoxLayout(&dialog);
-    auto *introLabel = new QLabel(scope == ExportScope::Roi
-                                      ? tr("Choose what to export for the current ROI.")
-                                      : tr("Choose what to export for the current frame."),
-                                  &dialog);
+    auto *introLabel = new QLabel(tr("Choose what to export for the current frame."), &dialog);
     introLabel->setWordWrap(true);
 
     auto *previewButton = new QRadioButton(tr("Rendered Preview (.png)"), &dialog);
     auto *analysisButton = new QRadioButton(tr("Analysis Channels (.tif)"), &dialog);
     auto *bundleButton = new QRadioButton(tr("Export Bundle (Recommended)"), &dialog);
     bundleButton->setChecked(true);
+
+    auto *roiCheckBox = new QCheckBox(tr("ROI"), &dialog);
+    roiCheckBox->setEnabled(imageViewport_->hasRoi());
+    roiCheckBox->setToolTip(roiCheckBox->isEnabled()
+                                ? tr("Crop exported frame files to the current ROI.")
+                                : tr("Draw an ROI before opening this dialog to export only that region."));
 
     auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -2058,19 +2090,24 @@ MainWindow::ExportMode MainWindow::promptForExportMode(ExportScope scope) const
     layout->addWidget(previewButton);
     layout->addWidget(analysisButton);
     layout->addWidget(bundleButton);
+    layout->addWidget(roiCheckBox);
     layout->addWidget(buttonBox);
 
     if (dialog.exec() != QDialog::Accepted) {
-        return ExportMode::Cancelled;
+        return options;
     }
 
     if (previewButton->isChecked()) {
-        return ExportMode::PreviewPng;
+        options.mode = ExportMode::PreviewPng;
+    } else if (analysisButton->isChecked()) {
+        options.mode = ExportMode::AnalysisTiffs;
+    } else {
+        options.mode = ExportMode::Bundle;
     }
-    if (analysisButton->isChecked()) {
-        return ExportMode::AnalysisTiffs;
+    if (roiCheckBox->isChecked()) {
+        options.scope = ExportScope::Roi;
     }
-    return ExportMode::Bundle;
+    return options;
 }
 
 MainWindow::ExportBundleResult MainWindow::exportCurrentFrame(const QString &selectedPath,
@@ -2298,8 +2335,8 @@ QString MainWindow::buildDefaultMovieSavePath(ExportScope scope, const MovieExpo
         const QString label = sanitizeToken(info.loops.at(index).label);
         nameParts << QStringLiteral("%1%2").arg(label, QString::number(settings.fixedCoordinates.at(index) + 1));
     }
-    if (scope == ExportScope::Roi && imageViewport_->hasRoi()) {
-        const QRect roi = imageViewport_->roiRect();
+    if (scope == ExportScope::Roi && settings.roiRect.isValid() && !settings.roiRect.isEmpty()) {
+        const QRect roi = settings.roiRect;
         nameParts << QStringLiteral("roi_x%1_y%2_w%3_h%4")
                          .arg(roi.x())
                          .arg(roi.y())

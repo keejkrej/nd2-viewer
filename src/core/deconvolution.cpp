@@ -3,6 +3,7 @@
 #include "core/framerenderer.h"
 
 #include <QObject>
+#include <QRect>
 
 #include <itkImage.h>
 #include <itkImageRegionConstIterator.h>
@@ -141,6 +142,35 @@ ItkImage2D::Pointer createGaussianPsf(const DeconvolutionSettings &settings)
     return psf;
 }
 
+RawFrame croppedRawFrame(const RawFrame &frame, const QRect &cropRect)
+{
+    RawFrame crop;
+
+    const QRect bounded = cropRect.intersected(QRect(0, 0, frame.width, frame.height));
+    if (!frame.isValid() || !bounded.isValid() || bounded.isEmpty()) {
+        return crop;
+    }
+
+    crop.sequenceIndex = frame.sequenceIndex;
+    crop.width = bounded.width();
+    crop.height = bounded.height();
+    crop.bitsPerComponent = frame.bitsPerComponent;
+    crop.components = frame.components;
+    crop.pixelDataType = frame.pixelDataType;
+    crop.bytesPerLine = static_cast<qsizetype>(crop.width) * crop.components * crop.bytesPerComponent();
+    crop.data.resize(crop.bytesPerLine * crop.height);
+
+    const qsizetype sourcePixelOffset = static_cast<qsizetype>(bounded.x()) * frame.components * frame.bytesPerComponent();
+    const qsizetype copiedRowBytes = crop.bytesPerLine;
+    for (int y = 0; y < crop.height; ++y) {
+        const char *sourceRow = frame.data.constData() + static_cast<qsizetype>(bounded.y() + y) * frame.bytesPerLine + sourcePixelOffset;
+        char *targetRow = crop.data.data() + static_cast<qsizetype>(y) * crop.bytesPerLine;
+        std::memcpy(targetRow, sourceRow, static_cast<size_t>(copiedRowBytes));
+    }
+
+    return crop;
+}
+
 ItkImage2D::Pointer deconvolveComponent(const RawFrame &frame, int component, const ItkImage2D *psf, int iterations)
 {
     using Filter = itk::RichardsonLucyDeconvolutionImageFilter<ItkImage2D, ItkImage2D, ItkImage2D>;
@@ -206,28 +236,54 @@ DeconvolutionResult DeconvolutionProcessor::run2D(const RawFrame &frame,
     }
 
     try {
+        const QRect frameRect(0, 0, frame.width, frame.height);
+        QRect roiRect = settings.roiRect.intersected(frameRect);
+        if (settings.useRoi && (!roiRect.isValid() || roiRect.isEmpty())) {
+            result.errorMessage = QObject::tr("The selected ROI is outside the current frame.");
+            return result;
+        }
+
+        const int cropMargin = settings.useRoi ? std::clamp(settings.kernelRadiusPixels, 1, 31) : 0;
+        const QRect expandedRoiRect = settings.useRoi
+                                          ? roiRect.adjusted(-cropMargin, -cropMargin, cropMargin, cropMargin).intersected(frameRect)
+                                          : frameRect;
+        const RawFrame sourceFrame = settings.useRoi ? croppedRawFrame(frame, expandedRoiRect) : frame;
+        if (!sourceFrame.isValid()) {
+            result.errorMessage = settings.useRoi
+                                      ? QObject::tr("The selected ROI could not be cropped from the current frame.")
+                                      : QObject::tr("No valid raw 2D frame is available for deconvolution.");
+            return result;
+        }
+
         RawFrame deconvolvedFrame;
-        deconvolvedFrame.sequenceIndex = frame.sequenceIndex;
-        deconvolvedFrame.width = frame.width;
-        deconvolvedFrame.height = frame.height;
+        deconvolvedFrame.sequenceIndex = sourceFrame.sequenceIndex;
+        deconvolvedFrame.width = sourceFrame.width;
+        deconvolvedFrame.height = sourceFrame.height;
         deconvolvedFrame.bitsPerComponent = 32;
-        deconvolvedFrame.components = frame.components;
+        deconvolvedFrame.components = sourceFrame.components;
         deconvolvedFrame.pixelDataType = QStringLiteral("float");
-        deconvolvedFrame.bytesPerLine = static_cast<qsizetype>(frame.width) * frame.components * deconvolvedFrame.bytesPerComponent();
-        deconvolvedFrame.data.resize(deconvolvedFrame.bytesPerLine * frame.height);
+        deconvolvedFrame.bytesPerLine = static_cast<qsizetype>(sourceFrame.width) * sourceFrame.components * deconvolvedFrame.bytesPerComponent();
+        deconvolvedFrame.data.resize(deconvolvedFrame.bytesPerLine * sourceFrame.height);
         deconvolvedFrame.data.fill('\0');
 
         const ItkImage2D::Pointer psf = createGaussianPsf(settings);
-        for (int component = 0; component < frame.components; ++component) {
-            if (!channelEnabledForComponent(frame, channelSettings, component)) {
+        for (int component = 0; component < sourceFrame.components; ++component) {
+            if (!channelEnabledForComponent(sourceFrame, channelSettings, component)) {
                 continue;
             }
 
-            const ItkImage2D::Pointer output = deconvolveComponent(frame, component, psf.GetPointer(), settings.iterations);
+            const ItkImage2D::Pointer output = deconvolveComponent(sourceFrame, component, psf.GetPointer(), settings.iterations);
             copyComponentToFloatRawFrame(output.GetPointer(), deconvolvedFrame, component);
         }
 
         result.image = FrameRenderer::render(deconvolvedFrame, coordinates, channelSettings).image;
+        if (settings.useRoi && !result.image.isNull()) {
+            const QRect trimRect(roiRect.x() - expandedRoiRect.x(),
+                                 roiRect.y() - expandedRoiRect.y(),
+                                 roiRect.width(),
+                                 roiRect.height());
+            result.image = result.image.copy(trimRect);
+        }
         if (result.image.isNull()) {
             result.errorMessage = QObject::tr("The deconvolved frame could not be rendered.");
             return result;

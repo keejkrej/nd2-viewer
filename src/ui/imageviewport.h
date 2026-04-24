@@ -44,8 +44,6 @@ signals:
     void exportMovieRequested();
     void roiChanged(const QRect &roiRect);
     void roiPresenceChanged(bool hasRoi);
-    void exportRoiRequested();
-    void exportRoiMovieRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;

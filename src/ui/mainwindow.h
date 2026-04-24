@@ -42,9 +42,7 @@ protected:
 private slots:
     void openFile();
     void saveCurrentFrameAs();
-    void saveCurrentRoiAs();
     void exportMovieAs();
-    void exportRoiMovieAs();
     void runDeconvolution();
     void handleDeconvolutionFinished();
     void updateDocumentUi();
@@ -83,6 +81,12 @@ private:
         QStringList failures;
     };
 
+    struct FrameExportOptions
+    {
+        ExportMode mode = ExportMode::Cancelled;
+        ExportScope scope = ExportScope::Frame;
+    };
+
     struct LoopWidgets
     {
         QWidget *row = nullptr;
@@ -109,7 +113,7 @@ private:
     void updateStaticMetadataUi();
     void updateFrameMetadataUi();
     void updateFileInfoDialog();
-    [[nodiscard]] ExportMode promptForExportMode(ExportScope scope) const;
+    [[nodiscard]] FrameExportOptions promptForFrameExportOptions() const;
     [[nodiscard]] ExportBundleResult exportCurrentFrame(const QString &selectedPath,
                                                        ExportMode mode,
                                                        ExportScope scope) const;

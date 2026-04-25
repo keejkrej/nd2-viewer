@@ -1,0 +1,12 @@
+diff --git a/onnxruntime/core/common/semver.h b/onnxruntime/core/common/semver.h
+index 4a44590..9aa6cf2 100644
+--- a/onnxruntime/core/common/semver.h
++++ b/onnxruntime/core/common/semver.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <cstdint>
+ #include <optional>
+ #include <string_view>
+ 

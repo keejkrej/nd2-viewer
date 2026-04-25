@@ -98,6 +98,13 @@ set(ND2VIEWER_VTK_LIBS
 )
 
 find_package(libCZI CONFIG REQUIRED)
+if(TARGET libczi::libCZI)
+  set(ND2VIEWER_LIBCZI_TARGET libczi::libCZI)
+elseif(TARGET libczi::libCZIStatic)
+  set(ND2VIEWER_LIBCZI_TARGET libczi::libCZIStatic)
+else()
+  message(FATAL_ERROR "libCZI was found, but neither libczi::libCZI nor libczi::libCZIStatic is available.")
+endif()
 
 set(_nd2viewer_target_type)
 if(WIN32)
@@ -175,12 +182,19 @@ target_include_directories(nd2-viewer
     "${ND2SDK_ROOT}/include"
 )
 
-get_target_property(ND2VIEWER_LIBCZI_INCLUDE_DIRS libczi::libCZI INTERFACE_INCLUDE_DIRECTORIES)
+get_target_property(ND2VIEWER_LIBCZI_INCLUDE_DIRS "${ND2VIEWER_LIBCZI_TARGET}" INTERFACE_INCLUDE_DIRECTORIES)
 foreach(libczi_include_dir IN LISTS ND2VIEWER_LIBCZI_INCLUDE_DIRS)
   if(EXISTS "${libczi_include_dir}/libCZI/libCZI.h")
     target_include_directories(nd2-viewer PRIVATE "${libczi_include_dir}/libCZI")
   endif()
 endforeach()
+
+find_path(ND2VIEWER_ONNXRUNTIME_CXX_API_INCLUDE_DIR
+  NAMES onnxruntime_cxx_api.h
+  PATH_SUFFIXES onnxruntime onnxruntime/core/session
+  REQUIRED
+)
+target_include_directories(nd2-viewer PRIVATE "${ND2VIEWER_ONNXRUNTIME_CXX_API_INCLUDE_DIR}")
 
 if(MSVC)
   target_compile_options(nd2-viewer PRIVATE /W4 /permissive- /EHsc)
@@ -199,7 +213,11 @@ target_compile_definitions(nd2-viewer PRIVATE ND2VIEWER_HAS_VTK_3D=1)
 
 if(ND2VIEWER_USE_SHARED_SDK)
   add_library(ND2ReadSdk::Reader SHARED IMPORTED GLOBAL)
-  add_library(ND2ReadSdk::Tiff SHARED IMPORTED GLOBAL)
+  if(UNIX AND NOT APPLE)
+    add_library(ND2ReadSdk::Tiff INTERFACE IMPORTED GLOBAL)
+  else()
+    add_library(ND2ReadSdk::Tiff SHARED IMPORTED GLOBAL)
+  endif()
   if(WIN32)
     set_target_properties(ND2ReadSdk::Reader PROPERTIES
       IMPORTED_IMPLIB "${ND2SDK_ROOT}/lib/nd2readsdk-shared.lib"
@@ -217,19 +235,10 @@ if(ND2VIEWER_USE_SHARED_SDK)
       IMPORTED_LOCATION "${ND2SDK_ROOT}/bin/libtiff.dylib"
     )
   else()
-    if(NOT ND2SDK_TIFF_LIBRARY)
-      if(EXISTS "${ND2SDK_ROOT}/lib/libtiff.so")
-        set(ND2SDK_TIFF_LIBRARY "${ND2SDK_ROOT}/lib/libtiff.so")
-      else()
-        find_library(ND2SDK_TIFF_LIBRARY NAMES tiff REQUIRED)
-      endif()
-    endif()
     set_target_properties(ND2ReadSdk::Reader PROPERTIES
       IMPORTED_LOCATION "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so"
     )
-    set_target_properties(ND2ReadSdk::Tiff PROPERTIES
-      IMPORTED_LOCATION "${ND2SDK_TIFF_LIBRARY}"
-    )
+    target_link_options(nd2-viewer PRIVATE LINKER:--allow-shlib-undefined)
   endif()
 else()
   if(APPLE)
@@ -263,7 +272,7 @@ target_link_libraries(nd2-viewer
     Qt6::OpenGLWidgets
     Qt6::Svg
     Qt6::Widgets
-    libczi::libCZI
+    "${ND2VIEWER_LIBCZI_TARGET}"
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
     onnxruntime::onnxruntime
@@ -301,6 +310,14 @@ if(WIN32)
 endif()
 
 if(TARGET onnxruntime::onnxruntime)
+  get_target_property(ND2VIEWER_ONNXRUNTIME_TARGET_TYPE onnxruntime::onnxruntime TYPE)
+  if(ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "SHARED_LIBRARY"
+      OR ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "MODULE_LIBRARY"
+      OR ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "UNKNOWN_LIBRARY")
+    set(ND2VIEWER_COPY_ONNXRUNTIME_RUNTIME ON)
+  endif()
+endif()
+if(ND2VIEWER_COPY_ONNXRUNTIME_RUNTIME)
   if(APPLE)
     add_custom_command(TARGET nd2-viewer POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"

@@ -10,7 +10,26 @@
         "gui",
         "opengl",
         "widgets"
-      ]
+      ],
+      "platform": "!linux"
+    },
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "concurrent",
+        "fontconfig",
+        "freetype",
+        "gui",
+        "harfbuzz",
+        "opengl",
+        "widgets",
+        "xcb",
+        "xcb-sm",
+        "xcb-xlib",
+        "xrender"
+      ],
+      "platform": "linux"
     },
     "qtmultimedia",
     "qtsvg",

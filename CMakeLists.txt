@@ -64,6 +64,15 @@ if(onnxruntime_DIR)
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets Svg)
+if(UNIX AND NOT APPLE)
+  get_target_property(ND2VIEWER_QT_GUI_DISABLED_FEATURES Qt6::Gui QT_DISABLED_PUBLIC_FEATURES)
+  if("xcb" IN_LIST ND2VIEWER_QT_GUI_DISABLED_FEATURES)
+    message(FATAL_ERROR
+      "Linux builds require Qt's xcb platform plugin. Re-run "
+      "./scripts/install-vcpkg-deps-linux.sh so vcpkg rebuilds qtbase with the Linux xcb features from vcpkg.json."
+    )
+  endif()
+endif()
 find_package(ITK REQUIRED COMPONENTS ITKCommon ITKDeconvolution)
 include(${ITK_USE_FILE})
 find_package(onnxruntime CONFIG REQUIRED)

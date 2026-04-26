@@ -401,6 +401,11 @@ if(APPLE)
     BUILD_RPATH "@executable_path/../Frameworks"
     INSTALL_RPATH "@executable_path/../Frameworks"
   )
+elseif(UNIX AND NOT APPLE)
+  set_target_properties(nd2-viewer PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+    INSTALL_RPATH "$ORIGIN"
+  )
 endif()
 
 if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
@@ -419,6 +424,25 @@ if(APPLE AND ND2VIEWER_USE_SHARED_SDK)
   endforeach()
 endif()
 
+if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
+  if(EXISTS "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so")
+    add_custom_command(TARGET nd2-viewer POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so"
+        "$<TARGET_FILE_DIR:nd2-viewer>"
+      COMMENT "Copying ND2 SDK runtime library"
+    )
+  endif()
+  if(EXISTS "${ND2SDK_ROOT}/lib/liblimfile-shared.so")
+    add_custom_command(TARGET nd2-viewer POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${ND2SDK_ROOT}/lib/liblimfile-shared.so"
+        "$<TARGET_FILE_DIR:nd2-viewer>"
+      COMMENT "Copying limlimfile-shared runtime library"
+    )
+  endif()
+endif()
+
 if(ND2VIEWER_DEBCR_MODEL_PATH AND EXISTS "${ND2VIEWER_DEBCR_MODEL_PATH}")
   if(APPLE)
     install(FILES "${ND2VIEWER_DEBCR_MODEL_PATH}"
@@ -435,7 +459,7 @@ if(ND2VIEWER_DEBCR_MODEL_PATH AND EXISTS "${ND2VIEWER_DEBCR_MODEL_PATH}")
   endif()
 endif()
 
-if(NOT APPLE)
+if(WIN32)
   install(
     DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/"
     DESTINATION "."
@@ -445,6 +469,19 @@ if(NOT APPLE)
     PATTERN "*.ilk" EXCLUDE
     PATTERN "*.pdb" EXCLUDE
   )
+elseif(UNIX AND NOT APPLE)
+  if(EXISTS "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so")
+    install(FILES "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so"
+      DESTINATION "."
+      COMPONENT Runtime
+    )
+  endif()
+  if(EXISTS "${ND2SDK_ROOT}/lib/liblimfile-shared.so")
+    install(FILES "${ND2SDK_ROOT}/lib/liblimfile-shared.so"
+      DESTINATION "."
+      COMPONENT Runtime
+    )
+  endif()
 endif()
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"

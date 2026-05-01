@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(nd2-viewer VERSION 0.1.8 LANGUAGES CXX)
+project(nd2-viewer VERSION 0.1.8 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 
@@ -273,6 +273,36 @@ else()
   endif()
 endif()
 
+add_executable(microscopy-metadata-query tools/microscopy-metadata-query.cpp)
+target_include_directories(microscopy-metadata-query
+  PRIVATE
+    "${ND2SDK_ROOT}/include"
+)
+foreach(libczi_include_dir IN LISTS ND2VIEWER_LIBCZI_INCLUDE_DIRS)
+  if(EXISTS "${libczi_include_dir}/libCZI/libCZI.h")
+    target_include_directories(microscopy-metadata-query PRIVATE "${libczi_include_dir}/libCZI")
+  endif()
+endforeach()
+set_target_properties(microscopy-metadata-query PROPERTIES
+  AUTOMOC OFF
+  AUTORCC OFF
+  AUTOUIC OFF
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+target_link_libraries(microscopy-metadata-query PRIVATE "${ND2VIEWER_LIBCZI_TARGET}" ND2ReadSdk::Reader ND2ReadSdk::Tiff)
+if(UNIX AND NOT APPLE)
+  set_target_properties(microscopy-metadata-query PROPERTIES BUILD_RPATH "$ORIGIN")
+  if(ND2VIEWER_USE_SHARED_SDK)
+    target_link_options(microscopy-metadata-query PRIVATE LINKER:--allow-shlib-undefined)
+  endif()
+elseif(APPLE)
+  set_target_properties(microscopy-metadata-query PROPERTIES
+    BUILD_RPATH "${ND2SDK_ROOT}/lib;${ND2SDK_ROOT}/bin"
+  )
+endif()
+
 target_link_libraries(nd2-viewer
   PRIVATE
     Qt6::Concurrent
@@ -369,6 +399,11 @@ if(WIN32 AND ND2VIEWER_USE_SHARED_SDK)
         "${nd2_sdk_dll}"
         "$<TARGET_FILE_DIR:nd2-viewer>"
     )
+    add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${nd2_sdk_dll}"
+        "$<TARGET_FILE_DIR:microscopy-metadata-query>"
+    )
   endforeach()
 
 endif()
@@ -381,6 +416,12 @@ if(TARGET libczi::libCZI)
         "$<TARGET_FILE_DIR:nd2-viewer>"
       COMMENT "Copying libCZI runtime"
     )
+    add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:libczi::libCZI>"
+        "$<TARGET_FILE_DIR:microscopy-metadata-query>"
+      COMMENT "Copying libCZI runtime (microscopy-metadata-query)"
+    )
     install(FILES "$<TARGET_FILE:libczi::libCZI>"
       DESTINATION "."
       COMPONENT Runtime
@@ -392,6 +433,12 @@ if(TARGET libczi::libCZI)
         "$<TARGET_FILE:libczi::libCZI>"
         "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
       COMMENT "Copying libCZI runtime"
+    )
+    add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:libczi::libCZI>"
+        "$<TARGET_FILE_DIR:microscopy-metadata-query>"
+      COMMENT "Copying libCZI runtime (microscopy-metadata-query)"
     )
   endif()
 endif()
@@ -432,6 +479,12 @@ if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
         "$<TARGET_FILE_DIR:nd2-viewer>"
       COMMENT "Copying ND2 SDK runtime library"
     )
+    add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${ND2SDK_ROOT}/lib/libnd2readsdk-shared.so"
+        "$<TARGET_FILE_DIR:microscopy-metadata-query>"
+      COMMENT "Copying ND2 SDK runtime library (microscopy-metadata-query)"
+    )
   endif()
   if(EXISTS "${ND2SDK_ROOT}/lib/liblimfile-shared.so")
     add_custom_command(TARGET nd2-viewer POST_BUILD
@@ -440,12 +493,24 @@ if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
         "$<TARGET_FILE_DIR:nd2-viewer>"
       COMMENT "Copying liblimfile-shared runtime library"
     )
+    add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${ND2SDK_ROOT}/lib/liblimfile-shared.so"
+        "$<TARGET_FILE_DIR:microscopy-metadata-query>"
+      COMMENT "Copying liblimfile-shared runtime library (microscopy-metadata-query)"
+    )
   endif()
   add_custom_command(TARGET nd2-viewer POST_BUILD
     COMMAND "${CMAKE_COMMAND}"
       -DOUT_DIR="$<TARGET_FILE_DIR:nd2-viewer>"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/linux-ensure-libtiff5.cmake"
     COMMENT "Symlink libtiff.so.5 for Nikon liblimfile when only libtiff.so.6 is installed"
+  )
+  add_custom_command(TARGET microscopy-metadata-query POST_BUILD
+    COMMAND "${CMAKE_COMMAND}"
+      -DOUT_DIR="$<TARGET_FILE_DIR:microscopy-metadata-query>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/linux-ensure-libtiff5.cmake"
+    COMMENT "Symlink libtiff.so.5 for Nikon liblimfile (microscopy-metadata-query)"
   )
 endif()
 

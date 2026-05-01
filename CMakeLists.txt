@@ -438,9 +438,15 @@ if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${ND2SDK_ROOT}/lib/liblimfile-shared.so"
         "$<TARGET_FILE_DIR:nd2-viewer>"
-      COMMENT "Copying limlimfile-shared runtime library"
+      COMMENT "Copying liblimfile-shared runtime library"
     )
   endif()
+  add_custom_command(TARGET nd2-viewer POST_BUILD
+    COMMAND "${CMAKE_COMMAND}"
+      -DOUT_DIR="$<TARGET_FILE_DIR:nd2-viewer>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/linux-ensure-libtiff5.cmake"
+    COMMENT "Symlink libtiff.so.5 for Nikon liblimfile when only libtiff.so.6 is installed"
+  )
 endif()
 
 if(ND2VIEWER_DEBCR_MODEL_PATH AND EXISTS "${ND2VIEWER_DEBCR_MODEL_PATH}")
@@ -482,6 +488,11 @@ elseif(UNIX AND NOT APPLE)
       COMPONENT Runtime
     )
   endif()
+  install(FILES "${CMAKE_BINARY_DIR}/lib/libtiff.so.5"
+    DESTINATION "lib"
+    COMPONENT Runtime
+    OPTIONAL
+  )
 endif()
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"

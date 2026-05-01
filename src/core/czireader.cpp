@@ -8,11 +8,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <libCZI_Utilities.h>
 
@@ -175,6 +178,7 @@ void CziReader::close()
 
     reader_.reset();
     stream_.reset();
+    documentDimensionInfo_.reset();
     info_ = buildFallbackInfo(QString());
     loopBindings_.clear();
     channelValues_.clear();
@@ -544,6 +548,56 @@ const CziReader::SequencePlane *CziReader::sequencePlaneForIndex(int sequenceInd
     return &sequencePlanes_.at(sequenceIndex);
 }
 
+std::optional<double> CziReader::relativeTimeMsForSequencePlane(const SequencePlane &plane) const
+{
+    if (!documentDimensionInfo_) {
+        return std::nullopt;
+    }
+
+    int tBindingIndex = -1;
+    for (int i = 0; i < loopBindings_.size(); ++i) {
+        if (loopBindings_.at(i).dimension == libCZI::DimensionIndex::T) {
+            tBindingIndex = i;
+            break;
+        }
+    }
+    if (tBindingIndex < 0 || tBindingIndex >= plane.coordinates.size()) {
+        return std::nullopt;
+    }
+
+    const int tIndex = plane.coordinates.at(tBindingIndex);
+    if (tIndex < 0) {
+        return std::nullopt;
+    }
+
+    try {
+        const std::shared_ptr<libCZI::IDimensionTInfo> tInfo = documentDimensionInfo_->GetDimensionTInfo();
+        if (!tInfo) {
+            return std::nullopt;
+        }
+
+        std::vector<double> offsets;
+        if (tInfo->TryGetOffsetsList(&offsets) && !offsets.empty()) {
+            if (tIndex < static_cast<int>(offsets.size())) {
+                return offsets.at(static_cast<size_t>(tIndex)) * 1000.0;
+            }
+        }
+
+        double offsetSeconds = 0.0;
+        double incrementSeconds = 0.0;
+        if (tInfo->TryGetIntervalDefinition(&offsetSeconds, &incrementSeconds)) {
+            const double seconds = offsetSeconds + incrementSeconds * static_cast<double>(tIndex);
+            if (std::isfinite(seconds)) {
+                return seconds * 1000.0;
+            }
+        }
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
 bool CziReader::planeCoordinateForChannel(const SequencePlane &sequencePlane,
                                           int channelSlot,
                                           libCZI::CDimCoordinate *coordinate,
@@ -830,8 +884,14 @@ MetadataSection CziReader::frameMetadataSection(int sequenceIndex, QString *erro
         }
     }
 
+    QJsonObject treeRoot;
+    treeRoot.insert(QStringLiteral("channels"), channelArray);
+    if (const std::optional<double> relMs = relativeTimeMsForSequencePlane(*sequencePlane)) {
+        treeRoot.insert(QStringLiteral("time"), QJsonObject{{QStringLiteral("relativeTimeMs"), *relMs}});
+    }
+
     return jsonMetadataSection(QStringLiteral("Frame Metadata"),
-                               channelArray,
+                               treeRoot,
                                rawSections.isEmpty() ? QStringLiteral("No sampled frame-level XML metadata was found for the current CZI plane.")
                                                      : rawSections.join(QStringLiteral("\n\n")));
 }
@@ -843,6 +903,7 @@ bool CziReader::loadDocumentInfo(QString *errorMessage)
     channelValues_.clear();
     sequencePlanes_.clear();
     coordsToSequence_.clear();
+    documentDimensionInfo_.reset();
     documentFrameRect_ = {0, 0, 0, 0};
     selectedPyramidLayer_ = {0, 0};
     selectedPyramidScale_ = 1;
@@ -1222,14 +1283,18 @@ bool CziReader::buildSequenceMap(QString *errorMessage)
 
     if (metadataDocInfo) {
         const libCZI::ScalingInfo scalingInfo = metadataDocInfo->GetScalingInfo();
-        info_.axesCalibration = QVector3D(static_cast<float>(scalingInfo.scaleX),
-                                          static_cast<float>(scalingInfo.scaleY),
-                                          static_cast<float>(scalingInfo.scaleZ));
+        // libCZI reports pixel/voxel lengths in meters; DocumentInfo::axesCalibration matches ND2 (µm).
+        constexpr double kMetersToMicrons = 1e6;
+        info_.axesCalibration = QVector3D(static_cast<float>(scalingInfo.scaleX * kMetersToMicrons),
+                                          static_cast<float>(scalingInfo.scaleY * kMetersToMicrons),
+                                          static_cast<float>(scalingInfo.scaleZ * kMetersToMicrons));
         if (selectedPyramidScale_ > 1) {
             info_.axesCalibration.setX(info_.axesCalibration.x() * selectedPyramidScale_);
             info_.axesCalibration.setY(info_.axesCalibration.y() * selectedPyramidScale_);
         }
     }
+
+    documentDimensionInfo_ = std::move(metadataDocInfo);
 
     return true;
 }

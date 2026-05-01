@@ -1,18 +1,27 @@
 #include "ui/mainwindow.h"
 
 #include <QApplication>
+#include <QColor>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QMessageLogContext>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QPalette>
+#include <QProcess>
 #include <QStandardPaths>
+#include <QStyle>
+#include <QStyleFactory>
+#include <QStyleHints>
 #include <QSurfaceFormat>
 
 #include <algorithm>
+#include <optional>
 
 #include <QVTKOpenGLNativeWidget.h>
 
@@ -72,6 +81,90 @@ void forceQtPluginPathsToActiveQt()
     qputenv("QT_PLUGIN_PATH", qtPluginPath.toUtf8());
     qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", QDir(qtPluginPath).filePath(QStringLiteral("platforms")).toUtf8());
 }
+
+#ifdef Q_OS_LINUX
+void configureLinuxQtPlatform()
+{
+    // vcpkg Qt typically ships only Fusion; Kvantum is not available as a style plugin.
+    const QByteArray styleOverride = qgetenv("QT_STYLE_OVERRIDE").trimmed().toLower();
+    if (!styleOverride.isEmpty() && styleOverride.startsWith(QByteArrayLiteral("kvantum"))) {
+        qunsetenv("QT_STYLE_OVERRIDE");
+    }
+}
+
+void applyLinuxFusionDarkPalette()
+{
+    QPalette pal;
+    const QColor darkGray(53, 53, 53);
+    const QColor black(25, 25, 25);
+    const QColor blue(42, 130, 218);
+    const QColor gray(128, 128, 128);
+
+    pal.setColor(QPalette::Window, darkGray);
+    pal.setColor(QPalette::WindowText, Qt::white);
+    pal.setColor(QPalette::Base, black);
+    pal.setColor(QPalette::AlternateBase, darkGray);
+    pal.setColor(QPalette::ToolTipBase, Qt::white);
+    pal.setColor(QPalette::ToolTipText, Qt::white);
+    pal.setColor(QPalette::Text, Qt::white);
+    pal.setColor(QPalette::Button, darkGray);
+    pal.setColor(QPalette::ButtonText, Qt::white);
+    pal.setColor(QPalette::BrightText, Qt::red);
+    pal.setColor(QPalette::Link, blue);
+    pal.setColor(QPalette::Highlight, blue);
+    pal.setColor(QPalette::HighlightedText, Qt::white);
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, gray);
+    pal.setColor(QPalette::Disabled, QPalette::Text, gray);
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, gray);
+    pal.setColor(QPalette::Disabled, QPalette::Highlight, QColor(80, 80, 80));
+    pal.setColor(QPalette::Disabled, QPalette::HighlightedText, gray);
+    QApplication::setPalette(pal);
+}
+
+std::optional<Qt::ColorScheme> gnomeDesktopColorSchemeFromGsettings()
+{
+    QProcess proc;
+    proc.start(QStringLiteral("gsettings"),
+               {QStringLiteral("get"), QStringLiteral("org.gnome.desktop.interface"), QStringLiteral("color-scheme")});
+    if (!proc.waitForFinished(500)) {
+        return std::nullopt;
+    }
+    const QString out = QString::fromUtf8(proc.readAllStandardOutput()).simplified();
+    if (out.contains(QLatin1String("prefer-dark"))) {
+        return Qt::ColorScheme::Dark;
+    }
+    if (out.contains(QLatin1String("prefer-light"))) {
+        return Qt::ColorScheme::Light;
+    }
+    return std::nullopt;
+}
+
+void configureLinuxWidgetApplication(QApplication &app)
+{
+    if (QStyle *fusionStyle = QStyleFactory::create(QStringLiteral("Fusion"))) {
+        app.setStyle(fusionStyle);
+    }
+
+    QStyleHints *hints = app.styleHints();
+    const auto syncAppearance = [&]() {
+        Qt::ColorScheme scheme = hints->colorScheme();
+        if (scheme == Qt::ColorScheme::Unknown) {
+            if (const std::optional<Qt::ColorScheme> guess = gnomeDesktopColorSchemeFromGsettings()) {
+                scheme = *guess;
+            }
+        }
+        if (scheme == Qt::ColorScheme::Dark) {
+            applyLinuxFusionDarkPalette();
+        } else if (scheme == Qt::ColorScheme::Light) {
+            if (QStyle *st = app.style()) {
+                app.setPalette(st->standardPalette());
+            }
+        }
+    };
+    syncAppearance();
+    QObject::connect(hints, &QStyleHints::colorSchemeChanged, &app, [&](Qt::ColorScheme) { syncAppearance(); });
+}
+#endif
 
 void appMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
@@ -138,8 +231,15 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(format);
 
     forceQtPluginPathsToActiveQt();
+#ifdef Q_OS_LINUX
+    configureLinuxQtPlatform();
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+#endif
 
     QApplication app(argc, argv);
+#ifdef Q_OS_LINUX
+    configureLinuxWidgetApplication(app);
+#endif
     QApplication::setApplicationName(QStringLiteral("nd2-viewer"));
     QApplication::setOrganizationName(QStringLiteral("nd2-viewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));

@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QIcon>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -40,7 +41,9 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QPlainTextEdit>
+#include <QPolygonF>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRadioButton>
@@ -88,6 +91,57 @@ bool hasQtFfmpegMediaPlugin(const QStringList &libraryPaths)
     }
 
     return false;
+}
+
+QIcon timePlaybackPlayPixmapIcon(const QColor &foreground)
+{
+    constexpr int s = 16;
+    QPixmap pixmap(s, s);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPolygonF triangle = {QPointF(4.0, 2.5), QPointF(12.5, 8.0), QPointF(4.0, 13.5)};
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(foreground);
+    painter.drawPolygon(triangle);
+    return QIcon(pixmap);
+}
+
+QIcon timePlaybackStopPixmapIcon(const QColor &foreground)
+{
+    constexpr int s = 16;
+    QPixmap pixmap(s, s);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(foreground);
+    painter.drawRoundedRect(QRectF(3.5, 3.5, 9.0, 9.0), 1.0, 1.0);
+    return QIcon(pixmap);
+}
+
+QIcon timePlaybackPlayIconForWidget(const QWidget *widget)
+{
+    if (!widget || !widget->style()) {
+        return {};
+    }
+    const QIcon standard = widget->style()->standardIcon(QStyle::SP_MediaPlay);
+    if (!standard.isNull()) {
+        return standard;
+    }
+    return timePlaybackPlayPixmapIcon(widget->palette().color(QPalette::WindowText));
+}
+
+QIcon timePlaybackStopIconForWidget(const QWidget *widget)
+{
+    if (!widget || !widget->style()) {
+        return {};
+    }
+    const QIcon standard = widget->style()->standardIcon(QStyle::SP_MediaStop);
+    if (!standard.isNull()) {
+        return standard;
+    }
+    return timePlaybackStopPixmapIcon(widget->palette().color(QPalette::WindowText));
 }
 
 std::optional<double> finiteNumber(const QJsonValue &value)
@@ -176,21 +230,25 @@ std::optional<double> timeMsFromChannelsValue(const QJsonValue &value)
 
 std::optional<double> frameRelativeTimeMs(const MetadataSection &section)
 {
-    if (!section.treeValue.isObject()) {
-        return std::nullopt;
+    if (section.treeValue.isObject()) {
+        const QJsonObject metadata = section.treeValue.toObject();
+        if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channels")))) {
+            return timeMs;
+        }
+        if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channel")))) {
+            return timeMs;
+        }
+        if (const std::optional<double> timeMs = timeMsFromChannelValue(metadata.value(QStringLiteral("time")))) {
+            return timeMs;
+        }
+        return timeMsFromObject(metadata);
     }
 
-    const QJsonObject metadata = section.treeValue.toObject();
-    if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channels")))) {
-        return timeMs;
+    if (section.treeValue.isArray()) {
+        return timeMsFromChannelsValue(section.treeValue);
     }
-    if (const std::optional<double> timeMs = timeMsFromChannelsValue(metadata.value(QStringLiteral("channel")))) {
-        return timeMs;
-    }
-    if (const std::optional<double> timeMs = timeMsFromChannelValue(metadata.value(QStringLiteral("time")))) {
-        return timeMs;
-    }
-    return timeMsFromObject(metadata);
+
+    return std::nullopt;
 }
 
 QString formatElapsedTime(double relativeTimeMs)
@@ -1930,7 +1988,7 @@ void MainWindow::rebuildNavigatorControls()
         if (index == timeLoopIndex) {
             playButton = new QToolButton(widgets.row);
             playButton->setAutoRaise(true);
-            playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            playButton->setIcon(timePlaybackPlayIconForWidget(playButton));
             playButton->setToolTip(tr("Choose a playback step and start the time loop."));
             timePlaybackButton_ = playButton;
             timePlaybackLoopIndex_ = index;
@@ -2069,7 +2127,7 @@ void MainWindow::startTimePlayback()
     timePlaybackAwaitingFrame_ = false;
     timePlaybackActive_ = true;
     if (timePlaybackButton_) {
-        timePlaybackButton_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+        timePlaybackButton_->setIcon(timePlaybackStopIconForWidget(timePlaybackButton_));
         timePlaybackButton_->setToolTip(tr("Stop time loop playback."));
     }
     statusBar()->showMessage(tr("Playing time loop with step %1…").arg(timePlaybackStep_));
@@ -2088,7 +2146,7 @@ void MainWindow::stopTimePlayback()
         timePlaybackTimer_->stop();
     }
     if (timePlaybackButton_) {
-        timePlaybackButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+        timePlaybackButton_->setIcon(timePlaybackPlayIconForWidget(timePlaybackButton_));
         timePlaybackButton_->setToolTip(tr("Choose a playback step and start the time loop."));
     }
 

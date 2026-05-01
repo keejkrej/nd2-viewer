@@ -8,6 +8,7 @@
 #include <QVector>
 
 #include <memory>
+#include <optional>
 
 #include <libCZI.h>
 
@@ -69,6 +70,7 @@ private:
     bool buildSequenceMap(QString *errorMessage);
     QJsonObject buildSummaryMetadata(const QString &metadataXml) const;
     const SequencePlane *sequencePlaneForIndex(int sequenceIndex, QString *errorMessage = nullptr) const;
+    [[nodiscard]] std::optional<double> relativeTimeMsForSequencePlane(const SequencePlane &plane) const;
     bool planeCoordinateForChannel(const SequencePlane &sequencePlane,
                                    int channelSlot,
                                    libCZI::CDimCoordinate *coordinate,
@@ -78,6 +80,7 @@ private:
     mutable QMutex mutex_;
     std::shared_ptr<libCZI::IStream> stream_;
     std::shared_ptr<libCZI::ICZIReader> reader_;
+    std::shared_ptr<libCZI::ICziMultiDimensionDocumentInfo> documentDimensionInfo_;
     DocumentInfo info_;
     QVector<LoopBinding> loopBindings_;
     QVector<int> channelValues_;

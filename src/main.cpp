@@ -6,7 +6,6 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLibraryInfo>
@@ -69,57 +68,6 @@ void preferQtFfmpegMediaBackendIfAvailable()
         qInfo("QT_MEDIA_BACKEND set to ffmpeg");
     } else {
         qInfo("Qt FFmpeg multimedia plugin not found; leaving QT_MEDIA_BACKEND unset");
-    }
-}
-
-void preferBundledQtPlatformPluginPath(int argc, char *argv[])
-{
-    // Do not set QT_PLUGIN_PATH: it replaces Qt's default plugin discovery (including
-    // <applicationDir>/plugins/imageformats). windeployqt may omit optional image plugins unless
-    // we copy them explicitly in msvc-windeployqt.ps1 (qpng is required for PNG export).
-    // Only steer the *platform* plugin directory so the Windows/macOS QPA plugin loads reliably.
-    QString exeDir;
-#ifdef Q_OS_WIN
-    wchar_t modulePath[MAX_PATH];
-    const DWORD moduleLen = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
-    if (moduleLen > 0 && moduleLen < MAX_PATH) {
-        exeDir = QFileInfo(QString::fromWCharArray(modulePath, static_cast<int>(moduleLen))).absolutePath();
-    }
-#else
-    if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
-        const QFileInfo exeInfo(QString::fromLocal8Bit(argv[0]));
-        if (exeInfo.exists()) {
-            exeDir = exeInfo.absolutePath();
-        }
-    }
-#endif
-
-    QString platformDir;
-#if defined(Q_OS_MACOS)
-    if (!exeDir.isEmpty()) {
-        const QString bundlePlatforms = QDir(exeDir).filePath(QStringLiteral("../PlugIns/platforms"));
-        if (QDir(bundlePlatforms).exists()) {
-            platformDir = bundlePlatforms;
-        }
-    }
-#endif
-    if (platformDir.isEmpty() && !exeDir.isEmpty()) {
-        const QString bundledPlatforms = QDir(exeDir).filePath(QStringLiteral("plugins/platforms"));
-        if (QDir(bundledPlatforms).exists()) {
-            platformDir = bundledPlatforms;
-        }
-    }
-    if (platformDir.isEmpty()) {
-        const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
-        if (!qtPluginPath.isEmpty()) {
-            const QString qtPlatforms = QDir(qtPluginPath).filePath(QStringLiteral("platforms"));
-            if (QDir(qtPlatforms).exists()) {
-                platformDir = qtPlatforms;
-            }
-        }
-    }
-    if (!platformDir.isEmpty()) {
-        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", platformDir.toUtf8());
     }
 }
 
@@ -271,7 +219,6 @@ int main(int argc, char *argv[])
     format.setDepthBufferSize(std::max(format.depthBufferSize(), 24));
     QSurfaceFormat::setDefaultFormat(format);
 
-    preferBundledQtPlatformPluginPath(argc, argv);
 #ifdef Q_OS_LINUX
     configureLinuxQtPlatform();
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);

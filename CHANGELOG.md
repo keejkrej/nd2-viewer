@@ -2,24 +2,32 @@
 
 All notable changes to `nd2-viewer` are documented in this file.
 
-## [0.1.8] - 2026-04-24
+## [0.1.8] - 2026-05-09
+
+### Added
+- Added a vcpkg manifest build for Qt, VTK, ITK, QtSvg, QtMultimedia, libCZI, and ONNX Runtime, plus vcpkg root-resolution helpers and explicit dependency warm-up scripts for Windows, macOS, and Linux.
+- Added `vcpkg-configuration.json` overlay ports for ICU, ONNX Runtime, and PipeWire (the PipeWire overlay disables its ONNX SPA plugin so Linux manifest builds do not fail when ONNX Runtime is in the dependency graph).
+- Added Linux triplet, configure, dependency-install, and package helper scripts, including packaging that bundles Nikon ND2 SDK shared libraries and a `libtiff.so.5` compatibility symlink required by Nikon's `liblimfile`.
+- Added `Tools > Deconvolution...`, a 2D-only Richardson–Lucy preview that snapshots the current raw frame and channel settings, runs ITK in the background, and opens an independent result window.
+- Added optional DeBCR-style inference using an ONNX model (packaged or supplied via `ND2VIEWER_DEBCR_MODEL_PATH`) alongside the ITK path.
+- Added ROI-focused options for the deconvolution workflow and related export paths.
+- Added a 2D scale bar, a 2D/3D acquisition-time overlay driven from file metadata, and a companion `microscopy-metadata-query` CLI for dumping raw ND2/CZI SDK metadata outside the GUI.
 
 ### Changed
 - Bumped the project version to `0.1.8`.
-- Migrated the build pipeline to vcpkg manifest dependencies for Qt, VTK, ITK, QtSvg, QtMultimedia, and libCZI.
-- Switched CMake from the vendored `third_party/libczi` subdirectory to the vcpkg `libczi::libCZI` package target.
-- Updated Windows and macOS build/deploy scripts to install manifest dependencies, configure with the vcpkg toolchain, and deploy from vcpkg's Qt runtime layout.
+- Switched CMake from the vendored `third_party/libczi` tree to the vcpkg `libczi::libCZI` target while keeping include layout compatible with the existing reader code.
+- Updated Windows and macOS build/deploy scripts to install manifest dependencies, configure with the vcpkg toolchain, and deploy from vcpkg's Qt runtime layout; release packaging continues to validate the full ICU DLL set on Windows.
+- Enabled the `qtbase` PNG feature in the manifest where needed so frame PNG export works against the bundled imageformats plugins, merged deploy-time Qt plugin search paths for exports, and dropped the startup Qt platform-plugin path override now that deployment paths are consistent.
 
-### Added
-- Added vcpkg root-resolution helpers and explicit dependency warm-up scripts for Windows and macOS.
-- Added Linux vcpkg build, dependency-install, triplet, and package helper scripts.
-- Added a vcpkg ICU overlay used by the manifest build.
+### Fixed
+- Fixed CZI physical calibration and time metadata handling used by the viewer overlays, with related Linux UI polish.
+- Hardened Linux CI and local builds around Qt XCB dependencies, ONNX Runtime vcpkg integration, and the correct default Linux triplet for this repository.
 
 ### Removed
-- Removed the standalone VTK and ITK bootstrap scripts now replaced by vcpkg manifest installation.
+- Removed the standalone VTK and ITK bootstrap scripts in favor of manifest-driven `vcpkg install`.
 
 ### Documentation
-- Updated `README.md` and `AGENTS.md` to describe the vcpkg-based dependency flow and the current `0.1.8` packaging output example.
+- Updated `README.md` and `AGENTS.md` for the vcpkg-based dependency flow, Linux helpers, deconvolution tools, metadata CLI, overlay behavior, and the current `0.1.8` packaging output example.
 
 ## [0.1.7] - 2026-04-14
 

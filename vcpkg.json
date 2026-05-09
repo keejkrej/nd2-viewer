@@ -9,6 +9,7 @@
         "concurrent",
         "gui",
         "opengl",
+        "png",
         "widgets"
       ],
       "platform": "!linux"
@@ -23,6 +24,7 @@
         "gui",
         "harfbuzz",
         "opengl",
+        "png",
         "widgets",
         "xcb",
         "xcb-sm",

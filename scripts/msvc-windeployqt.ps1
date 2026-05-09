@@ -104,9 +104,8 @@ function Deploy-DebugQtFromVcpkg([string]$QtRootPath, [string]$TargetDir) {
         Copy-Item -Destination $TargetDir -Force
 
     Write-Host "msvc-windeployqt: copying debug Qt plugins from '$debugPluginRoot'..."
-    foreach ($pluginDir in Get-ChildItem -LiteralPath $debugPluginRoot -Directory) {
-        Copy-DirectoryContents -SourceDir $pluginDir.FullName -TargetDir (Join-Path $TargetDir $pluginDir.Name)
-    }
+    $destPluginsRoot = Join-Path $TargetDir "plugins"
+    Copy-DirectoryContents -SourceDir $debugPluginRoot -TargetDir $destPluginsRoot
 }
 
 $windeployqt = $null

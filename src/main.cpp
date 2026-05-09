@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLibraryInfo>
@@ -71,15 +72,76 @@ void preferQtFfmpegMediaBackendIfAvailable()
     }
 }
 
-void forceQtPluginPathsToActiveQt()
+void forceQtPluginPathsToActiveQt(int argc, char *argv[])
 {
+    // Setting QT_PLUGIN_PATH replaces Qt's default plugin search paths. If we only point at the
+    // build-time Qt prefix (vcpkg), packaged installs and windeployqt/macdeployqt bundles cannot
+    // load plugins shipped next to the executable — notably imageformats (PNG/TIFF), breaking save.
+    QStringList pluginRoots;
+
+    QString exeDir;
+    if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
+        const QFileInfo exeInfo(QString::fromLocal8Bit(argv[0]));
+        if (exeInfo.exists()) {
+            exeDir = exeInfo.absolutePath();
+        }
+    }
+
+#if defined(Q_OS_MACOS)
+    if (!exeDir.isEmpty()) {
+        const QString bundlePlugIns = QDir(exeDir).filePath(QStringLiteral("../PlugIns"));
+        if (QDir(bundlePlugIns).exists()) {
+            pluginRoots.append(bundlePlugIns);
+        }
+    }
+#endif
+    if (!exeDir.isEmpty()) {
+        const QString bundledPlugins = QDir(exeDir).filePath(QStringLiteral("plugins"));
+        if (QDir(bundledPlugins).exists()) {
+            pluginRoots.append(bundledPlugins);
+        }
+    }
+
     const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
-    if (qtPluginPath.isEmpty()) {
+    if (!qtPluginPath.isEmpty() && !pluginRoots.contains(qtPluginPath)) {
+        pluginRoots.append(qtPluginPath);
+    }
+
+    if (pluginRoots.isEmpty()) {
         return;
     }
 
-    qputenv("QT_PLUGIN_PATH", qtPluginPath.toUtf8());
-    qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", QDir(qtPluginPath).filePath(QStringLiteral("platforms")).toUtf8());
+#ifdef Q_OS_WIN
+    const QString pathSep = QStringLiteral(";");
+#else
+    const QString pathSep = QStringLiteral(":");
+#endif
+    qputenv("QT_PLUGIN_PATH", pluginRoots.join(pathSep).toUtf8());
+
+    QString platformDir;
+#if defined(Q_OS_MACOS)
+    if (!exeDir.isEmpty()) {
+        const QString bundlePlatforms = QDir(exeDir).filePath(QStringLiteral("../PlugIns/platforms"));
+        if (QDir(bundlePlatforms).exists()) {
+            platformDir = bundlePlatforms;
+        }
+    }
+#endif
+    if (platformDir.isEmpty() && !exeDir.isEmpty()) {
+        const QString bundledPlatforms = QDir(exeDir).filePath(QStringLiteral("plugins/platforms"));
+        if (QDir(bundledPlatforms).exists()) {
+            platformDir = bundledPlatforms;
+        }
+    }
+    if (platformDir.isEmpty() && !qtPluginPath.isEmpty()) {
+        const QString qtPlatforms = QDir(qtPluginPath).filePath(QStringLiteral("platforms"));
+        if (QDir(qtPlatforms).exists()) {
+            platformDir = qtPlatforms;
+        }
+    }
+    if (!platformDir.isEmpty()) {
+        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", platformDir.toUtf8());
+    }
 }
 
 #ifdef Q_OS_LINUX
@@ -230,7 +292,7 @@ int main(int argc, char *argv[])
     format.setDepthBufferSize(std::max(format.depthBufferSize(), 24));
     QSurfaceFormat::setDefaultFormat(format);
 
-    forceQtPluginPathsToActiveQt();
+    forceQtPluginPathsToActiveQt(argc, argv);
 #ifdef Q_OS_LINUX
     configureLinuxQtPlatform();
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);

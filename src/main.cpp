@@ -1,5 +1,7 @@
 #include "ui/mainwindow.h"
 
+#include "core/segmentation.h"
+
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
@@ -155,6 +157,15 @@ void configureLinuxWidgetApplication(QApplication &app)
 }
 #endif
 
+#ifdef Q_OS_WIN
+void configureWindowsWidgetApplication(QApplication &app)
+{
+    if (QStyle *fusionStyle = QStyleFactory::create(QStringLiteral("Fusion"))) {
+        app.setStyle(fusionStyle);
+    }
+}
+#endif
+
 void appMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
     const char *level = "INFO";
@@ -225,6 +236,9 @@ int main(int argc, char *argv[])
 #endif
 
     QApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    configureWindowsWidgetApplication(app);
+#endif
 #ifdef Q_OS_LINUX
     configureLinuxWidgetApplication(app);
 #endif
@@ -232,6 +246,7 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(QStringLiteral("nd2-viewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));
     setupLogging();
+    qInfo("Qt widget style: %s", qPrintable(app.style() ? app.style()->objectName() : QStringLiteral("(none)")));
     preferQtFfmpegMediaBackendIfAvailable();
 
     qRegisterMetaType<ChannelRenderSettings>();
@@ -244,6 +259,11 @@ int main(int argc, char *argv[])
     qRegisterMetaType<RawVolume>();
     qRegisterMetaType<RenderedFrame>();
     qRegisterMetaType<MetadataSection>();
+    qRegisterMetaType<SegmentationThresholdResult>();
+    qRegisterMetaType<SegmentationMask2D>();
+    qRegisterMetaType<SegmentationMask3D>();
+    qRegisterMetaType<SegmentationLabels2D>();
+    qRegisterMetaType<SegmentationLabels3D>();
 
     MainWindow window;
     window.show();

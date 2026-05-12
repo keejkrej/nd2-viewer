@@ -3,6 +3,7 @@
 #include "ui/autocontrasttuningdialog.h"
 #include "ui/channelcontrolswidget.h"
 #include "ui/imageviewport.h"
+#include "ui/segmentationdialog.h"
 #include "ui/volumeviewport3d.h"
 #include "core/documentreaderfactory.h"
 #include "core/framerenderer.h"
@@ -648,15 +649,10 @@ public:
 
         layout->addLayout(sharedFormLayout);
 
-        tabWidget_ = new QTabWidget(this);
-
-        auto *classicalTab = new QWidget(tabWidget_);
-        auto *classicalLayout = new QFormLayout(classicalTab);
-
         iterationsSpin_ = new QSpinBox(this);
         iterationsSpin_->setRange(1, 100);
         iterationsSpin_->setValue(20);
-        classicalLayout->addRow(tr("Iterations"), iterationsSpin_);
+        sharedFormLayout->addRow(tr("Iterations"), iterationsSpin_);
 
         sigmaSpin_ = new QDoubleSpinBox(this);
         sigmaSpin_->setRange(0.2, 10.0);
@@ -664,25 +660,13 @@ public:
         sigmaSpin_->setSingleStep(0.1);
         sigmaSpin_->setSuffix(tr(" px"));
         sigmaSpin_->setValue(1.2);
-        classicalLayout->addRow(tr("Gaussian sigma"), sigmaSpin_);
+        sharedFormLayout->addRow(tr("Gaussian sigma"), sigmaSpin_);
 
         kernelRadiusSpin_ = new QSpinBox(this);
         kernelRadiusSpin_->setRange(1, 31);
         kernelRadiusSpin_->setValue(5);
         kernelRadiusSpin_->setSuffix(tr(" px"));
-        classicalLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
-
-        tabWidget_->addTab(classicalTab, tr("Classical"));
-
-        auto *deepLearningTab = new QWidget(tabWidget_);
-        auto *deepLearningLayout = new QFormLayout(deepLearningTab);
-        modelPathLabel_ = new QLabel(QDir::toNativeSeparators(DeconvolutionProcessor::defaultDebcrModelPath()), this);
-        modelPathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        modelPathLabel_->setWordWrap(true);
-        deepLearningLayout->addRow(tr("Model"), modelPathLabel_);
-        tabWidget_->addTab(deepLearningTab, tr("Deep Learning"));
-
-        layout->addWidget(tabWidget_);
+        sharedFormLayout->addRow(tr("Kernel radius"), kernelRadiusSpin_);
 
         auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
         buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Run"));
@@ -694,24 +678,20 @@ public:
     [[nodiscard]] DeconvolutionSettings settings() const
     {
         DeconvolutionSettings settings;
-        settings.method = tabWidget_->currentIndex() == 1 ? DeconvolutionMethod::DeepLearning : DeconvolutionMethod::Classical;
         settings.channelIndex = channelComboBox_->currentData().toInt();
         settings.iterations = iterationsSpin_->value();
         settings.gaussianSigmaPixels = sigmaSpin_->value();
         settings.kernelRadiusPixels = kernelRadiusSpin_->value();
         settings.useRoi = roiCheckBox_->isChecked();
-        settings.modelPath = DeconvolutionProcessor::defaultDebcrModelPath();
         return settings;
     }
 
 private:
     QComboBox *channelComboBox_ = nullptr;
     QCheckBox *roiCheckBox_ = nullptr;
-    QTabWidget *tabWidget_ = nullptr;
     QSpinBox *iterationsSpin_ = nullptr;
     QDoubleSpinBox *sigmaSpin_ = nullptr;
     QSpinBox *kernelRadiusSpin_ = nullptr;
-    QLabel *modelPathLabel_ = nullptr;
 };
 
 class DeconvolutionResultWindow final : public QDialog
@@ -1074,6 +1054,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
         statusBar()->showMessage(tr("Wait for the movie export to finish before closing the window."), 5000);
         return;
     }
+    if (segmentationInProgress_) {
+        event->ignore();
+        statusBar()->showMessage(tr("Wait for segmentation processing to finish before closing the window."), 5000);
+        return;
+    }
 
     if (volumeWatcher_.isRunning()) {
         volumeWatcher_.waitForFinished();
@@ -1126,7 +1111,7 @@ void MainWindow::exportMovieAs()
 
 void MainWindow::runDeconvolution()
 {
-    if (deconvolutionInProgress_ || movieExportInProgress_) {
+    if (deconvolutionInProgress_ || segmentationInProgress_ || movieExportInProgress_) {
         return;
     }
 
@@ -1179,13 +1164,6 @@ void MainWindow::runDeconvolution()
             return;
         }
     }
-    if (settings.method == DeconvolutionMethod::DeepLearning && !QFileInfo::exists(settings.modelPath)) {
-        QMessageBox::warning(this,
-                             tr("Deconvolution"),
-                             tr("The bundled DeBCR ONNX model was not found at '%1'.").arg(QDir::toNativeSeparators(settings.modelPath)));
-        return;
-    }
-
     const FrameCoordinateState coordinates = controller_.coordinateState();
     QString channelLabel = tr("Channel %1").arg(settings.channelIndex + 1);
     const DocumentInfo documentInfo = controller_.documentInfo();
@@ -1193,17 +1171,12 @@ void MainWindow::runDeconvolution()
         && !documentInfo.channels.at(settings.channelIndex).name.isEmpty()) {
         channelLabel = documentInfo.channels.at(settings.channelIndex).name;
     }
-    if (settings.method == DeconvolutionMethod::DeepLearning) {
-        pendingDeconvolutionTitle_ =
-            tr("DeBCR Deconvolution - %1 - %2").arg(coordinateSummary(documentInfo, coordinates), channelLabel);
-    } else {
-        pendingDeconvolutionTitle_ =
-            tr("Deconvolution - %1 - %2 - iter %3, sigma %4 px, radius %5 px")
-                .arg(coordinateSummary(documentInfo, coordinates), channelLabel)
-                .arg(settings.iterations)
-                .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
-                .arg(settings.kernelRadiusPixels);
-    }
+    pendingDeconvolutionTitle_ =
+        tr("Deconvolution - %1 - %2 - iter %3, sigma %4 px, radius %5 px")
+            .arg(coordinateSummary(documentInfo, coordinates), channelLabel)
+            .arg(settings.iterations)
+            .arg(settings.gaussianSigmaPixels, 0, 'f', 2)
+            .arg(settings.kernelRadiusPixels);
     if (settings.useRoi) {
         pendingDeconvolutionTitle_ += tr(" - ROI x%1 y%2 w%3 h%4")
                                           .arg(settings.roiRect.x())
@@ -1213,10 +1186,8 @@ void MainWindow::runDeconvolution()
     }
 
     deconvolutionInProgress_ = true;
-    updateDeconvolutionActionState();
-    statusBar()->showMessage(settings.method == DeconvolutionMethod::DeepLearning
-                                 ? tr("Running DeBCR ONNX deconvolution...")
-                                 : tr("Running 2D deconvolution..."));
+    updateProcessingActionStates();
+    statusBar()->showMessage(tr("Running 2D deconvolution..."));
     setCursor(Qt::BusyCursor);
 
     deconvolutionWatcher_.setFuture(QtConcurrent::run([rawFrame, coordinates, channelSettings, settings]() {
@@ -1229,7 +1200,7 @@ void MainWindow::handleDeconvolutionFinished()
     const DeconvolutionResult result = deconvolutionWatcher_.result();
     deconvolutionInProgress_ = false;
     unsetCursor();
-    updateDeconvolutionActionState();
+    updateProcessingActionStates();
 
     if (!result.success || result.image.isNull()) {
         const QString message = result.errorMessage.isEmpty()
@@ -1244,6 +1215,63 @@ void MainWindow::handleDeconvolutionFinished()
     window->show();
     statusBar()->showMessage(tr("Deconvolution complete."), 3000);
     pendingDeconvolutionTitle_.clear();
+}
+
+void MainWindow::runSegmentation()
+{
+    if (segmentationInProgress_ || deconvolutionInProgress_ || movieExportInProgress_) {
+        return;
+    }
+
+    if (!controller_.hasDocument()) {
+        QMessageBox::information(this,
+                                 tr("Segmentation"),
+                                 tr("Open an ND2 or CZI file before running segmentation."));
+        return;
+    }
+
+    const QVector<ChannelRenderSettings> channelSettings = controller_.channelSettings();
+    if (channelSettings.isEmpty()) {
+        QMessageBox::warning(this,
+                             tr("Segmentation"),
+                             tr("Channel settings are not ready yet."));
+        return;
+    }
+
+    SegmentationDialog *dialog = nullptr;
+    if (isVolumeViewActive()) {
+        if (volumeWatcher_.isRunning() || !cachedVolume_.isValid()) {
+            QMessageBox::information(this,
+                                     tr("Segmentation"),
+                                     tr("Wait for the 3D volume to finish loading before running segmentation."));
+            return;
+        }
+        dialog = new SegmentationDialog(controller_.documentInfo(), channelSettings, cachedVolume_, this);
+    } else {
+        const RawFrame rawFrame = controller_.currentRawFrame();
+        if (!rawFrame.isValid()) {
+            QMessageBox::warning(this,
+                                 tr("Segmentation"),
+                                 tr("A valid raw frame is not ready yet."));
+            return;
+        }
+        dialog = new SegmentationDialog(controller_.documentInfo(),
+                                        channelSettings,
+                                        rawFrame,
+                                        controller_.coordinateState(),
+                                        this);
+    }
+
+    connect(dialog, &SegmentationDialog::processingStateChanged,
+            this, &MainWindow::setSegmentationProcessing);
+    connect(dialog, &QObject::destroyed, this, [this]() {
+        if (segmentationInProgress_) {
+            setSegmentationProcessing(false);
+        } else {
+            updateProcessingActionStates();
+        }
+    });
+    dialog->show();
 }
 
 void MainWindow::showFileInfoDialog()
@@ -1320,7 +1348,7 @@ void MainWindow::updateViewModeButtons()
                                           : tr("Fit the current image to the viewport once."));
         viewActionButton_->setEnabled(!movieExportInProgress_ && (volumeActive ? volumeReady : hasImage));
     }
-    updateDeconvolutionActionState();
+    updateProcessingActionStates();
 }
 
 void MainWindow::openAutoContrastTuningDialog(int channelIndex)
@@ -1661,6 +1689,7 @@ void MainWindow::updateDocumentUi()
     imageViewport_->clearRoi();
     imageViewport_->setImage(controller_.renderedFrame().image);
     updateViewerOverlays();
+    updateProcessingActionStates();
     if (imageViewport_->hasImage()) {
         imageViewport_->zoomToFit();
     }
@@ -1705,6 +1734,7 @@ void MainWindow::updateChannelUi()
     channelControlsWidget_->updateSettings(controller_.channelSettings());
     channelControlsWidget_->setLiveAutoEnabled(controller_.liveAutoEnabled());
     syncVolumeViewportChannelSettings();
+    updateSegmentationActionState();
 }
 
 void MainWindow::updateFrameUi()
@@ -1716,6 +1746,7 @@ void MainWindow::updateFrameUi()
     }
     updateViewerOverlays();
     updateViewModeButtons();
+    updateProcessingActionStates();
     updateInfoLabel();
     if (!isVolumeViewActive() && timePlaybackActive_ && timePlaybackAwaitingFrame_) {
         completeTimePlaybackStep();
@@ -1826,7 +1857,9 @@ void MainWindow::buildMenus()
     toolsMenu->addSeparator();
     deconvolutionAction_ = toolsMenu->addAction(tr("Deconvolution..."));
     connect(deconvolutionAction_, &QAction::triggered, this, &MainWindow::runDeconvolution);
-    updateDeconvolutionActionState();
+    segmentationAction_ = toolsMenu->addAction(tr("Segmentation..."));
+    connect(segmentationAction_, &QAction::triggered, this, &MainWindow::runSegmentation);
+    updateProcessingActionStates();
 }
 
 void MainWindow::buildCentralUi()
@@ -2813,11 +2846,52 @@ void MainWindow::updateDeconvolutionActionState()
     }
 
     const bool available = !deconvolutionInProgress_
+                           && !segmentationInProgress_
                            && !movieExportInProgress_
                            && controller_.hasDocument()
                            && !isVolumeViewActive()
                            && controller_.currentRawFrame().isValid();
     deconvolutionAction_->setEnabled(available);
+}
+
+void MainWindow::updateSegmentationActionState()
+{
+    if (!segmentationAction_) {
+        return;
+    }
+
+    const bool available2D = !isVolumeViewActive() && controller_.currentRawFrame().isValid();
+    const bool available3D = isVolumeViewActive() && cachedVolume_.isValid() && !volumeWatcher_.isRunning();
+    const bool available = !segmentationInProgress_
+                           && !deconvolutionInProgress_
+                           && !movieExportInProgress_
+                           && controller_.hasDocument()
+                           && (available2D || available3D);
+    segmentationAction_->setEnabled(available);
+}
+
+void MainWindow::updateProcessingActionStates()
+{
+    updateDeconvolutionActionState();
+    updateSegmentationActionState();
+}
+
+void MainWindow::setSegmentationProcessing(bool processing)
+{
+    if (segmentationInProgress_ == processing) {
+        updateProcessingActionStates();
+        return;
+    }
+
+    segmentationInProgress_ = processing;
+    if (segmentationInProgress_) {
+        statusBar()->showMessage(tr("Running segmentation..."));
+        setCursor(Qt::BusyCursor);
+    } else {
+        unsetCursor();
+        statusBar()->showMessage(tr("Segmentation processing complete."), 3000);
+    }
+    updateProcessingActionStates();
 }
 
 void MainWindow::startMovieExportPlayback(const MovieExportSettings &settings)

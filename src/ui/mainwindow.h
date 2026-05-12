@@ -44,6 +44,7 @@ private slots:
     void saveCurrentFrameAs();
     void exportMovieAs();
     void runDeconvolution();
+    void runSegmentation();
     void handleDeconvolutionFinished();
     void updateDocumentUi();
     void updateCoordinateUi();
@@ -153,6 +154,9 @@ private:
     void autoContrastChannelForActiveView(int channelIndex);
     void autoContrastAllForActiveView();
     void updateDeconvolutionActionState();
+    void updateSegmentationActionState();
+    void updateProcessingActionStates();
+    void setSegmentationProcessing(bool processing);
     [[nodiscard]] QImage captureCurrentVolumeImage() const;
     [[nodiscard]] QString sanitizeToken(const QString &value) const;
     [[nodiscard]] QString buildCurrentTimeOverlayText() const;
@@ -190,9 +194,11 @@ private:
     QAction *reloadAction_ = nullptr;
     QAction *fileInfoAction_ = nullptr;
     QAction *deconvolutionAction_ = nullptr;
+    QAction *segmentationAction_ = nullptr;
     QAction *quitAction_ = nullptr;
     QFutureWatcher<DeconvolutionResult> deconvolutionWatcher_;
     bool deconvolutionInProgress_ = false;
+    bool segmentationInProgress_ = false;
     QString pendingDeconvolutionTitle_;
     bool movieExportInProgress_ = false;
     bool timePlaybackActive_ = false;

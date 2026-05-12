@@ -45,10 +45,6 @@ set(ND2SDK_TIFF_LIBRARY "" CACHE FILEPATH "Path to the TIFF library used with th
 set(Qt6_DIR "" CACHE PATH "Path to Qt6Config.cmake (optional; vcpkg toolchain usually supplies Qt).")
 set(VTK_DIR "" CACHE PATH "Path to VTKConfig.cmake (optional; vcpkg toolchain usually supplies VTK).")
 set(ITK_DIR "" CACHE PATH "Path to ITKConfig.cmake (optional; vcpkg toolchain usually supplies ITK).")
-set(onnxruntime_DIR "" CACHE PATH "Path to onnxruntimeConfig.cmake (optional; vcpkg toolchain usually supplies ONNX Runtime).")
-set(ND2VIEWER_DEBCR_MODEL_PATH "/home/jack/workspace/DeBCR/checkpoints/LM_2D_CARE/debcr_LM_2D_CARE.onnx" CACHE FILEPATH
-  "Path to the DeBCR ONNX model copied into the app/package."
-)
 
 if(Qt6_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${Qt6_DIR}")
@@ -58,9 +54,6 @@ if(VTK_DIR)
 endif()
 if(ITK_DIR)
   list(APPEND CMAKE_PREFIX_PATH "${ITK_DIR}")
-endif()
-if(onnxruntime_DIR)
-  list(APPEND CMAKE_PREFIX_PATH "${onnxruntime_DIR}")
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Multimedia OpenGL OpenGLWidgets Svg)
@@ -73,9 +66,8 @@ if(UNIX AND NOT APPLE)
     )
   endif()
 endif()
-find_package(ITK REQUIRED COMPONENTS ITKCommon ITKDeconvolution)
+find_package(ITK REQUIRED COMPONENTS ITKCommon ITKDeconvolution ITKThresholding ITKConnectedComponents)
 include(${ITK_USE_FILE})
-find_package(onnxruntime CONFIG REQUIRED)
 find_package(VTK CONFIG REQUIRED COMPONENTS
   CommonCore
   CommonDataModel
@@ -145,6 +137,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/core/nd2reader.h
   src/core/readfailurepolicy.cpp
   src/core/readfailurepolicy.h
+  src/core/segmentation.cpp
+  src/core/segmentation.h
   src/core/volumeloader.cpp
   src/core/volumeloader.h
   src/core/volumeutils.cpp
@@ -157,6 +151,8 @@ add_executable(nd2-viewer ${_nd2viewer_target_type}
   src/ui/imageviewport.h
   src/ui/mainwindow.cpp
   src/ui/mainwindow.h
+  src/ui/segmentationdialog.cpp
+  src/ui/segmentationdialog.h
   src/ui/volumeviewport3d_backend.h
   src/ui/volumeviewport3d.cpp
   src/ui/volumeviewport3d.h
@@ -197,13 +193,6 @@ foreach(libczi_include_dir IN LISTS ND2VIEWER_LIBCZI_INCLUDE_DIRS)
     target_include_directories(nd2-viewer PRIVATE "${libczi_include_dir}/libCZI")
   endif()
 endforeach()
-
-find_path(ND2VIEWER_ONNXRUNTIME_CXX_API_INCLUDE_DIR
-  NAMES onnxruntime_cxx_api.h
-  PATH_SUFFIXES onnxruntime onnxruntime/core/session
-  REQUIRED
-)
-target_include_directories(nd2-viewer PRIVATE "${ND2VIEWER_ONNXRUNTIME_CXX_API_INCLUDE_DIR}")
 
 if(MSVC)
   target_compile_options(nd2-viewer PRIVATE /W4 /permissive- /EHsc)
@@ -314,29 +303,11 @@ target_link_libraries(nd2-viewer
     "${ND2VIEWER_LIBCZI_TARGET}"
     ND2ReadSdk::Reader
     ND2ReadSdk::Tiff
-    onnxruntime::onnxruntime
     ${ITK_LIBRARIES}
     ${ND2VIEWER_VTK_LIBS}
 )
 
 vtk_module_autoinit(TARGETS nd2-viewer MODULES ${ND2VIEWER_VTK_LIBS})
-
-if(ND2VIEWER_DEBCR_MODEL_PATH AND EXISTS "${ND2VIEWER_DEBCR_MODEL_PATH}")
-  if(APPLE)
-    set(ND2VIEWER_MODEL_BUILD_DIR "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Resources/models")
-  else()
-    set(ND2VIEWER_MODEL_BUILD_DIR "$<TARGET_FILE_DIR:nd2-viewer>/models")
-  endif()
-  add_custom_command(TARGET nd2-viewer POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ND2VIEWER_MODEL_BUILD_DIR}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${ND2VIEWER_DEBCR_MODEL_PATH}"
-      "${ND2VIEWER_MODEL_BUILD_DIR}/debcr_LM_2D_CARE.onnx"
-    COMMENT "Copying bundled DeBCR ONNX model"
-  )
-else()
-  message(WARNING "ND2VIEWER_DEBCR_MODEL_PATH does not exist; DeBCR inference will require a packaged model at runtime.")
-endif()
 
 if(WIN32)
   add_custom_command(TARGET nd2-viewer POST_BUILD
@@ -346,37 +317,6 @@ if(WIN32)
     COMMAND_EXPAND_LISTS
     COMMENT "Copying runtime DLL dependencies"
   )
-endif()
-
-if(TARGET onnxruntime::onnxruntime)
-  get_target_property(ND2VIEWER_ONNXRUNTIME_TARGET_TYPE onnxruntime::onnxruntime TYPE)
-  if(ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "SHARED_LIBRARY"
-      OR ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "MODULE_LIBRARY"
-      OR ND2VIEWER_ONNXRUNTIME_TARGET_TYPE STREQUAL "UNKNOWN_LIBRARY")
-    set(ND2VIEWER_COPY_ONNXRUNTIME_RUNTIME ON)
-  endif()
-endif()
-if(ND2VIEWER_COPY_ONNXRUNTIME_RUNTIME)
-  if(APPLE)
-    add_custom_command(TARGET nd2-viewer POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
-      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "$<TARGET_FILE:onnxruntime::onnxruntime>"
-        "$<TARGET_BUNDLE_DIR:nd2-viewer>/Contents/Frameworks"
-      COMMENT "Copying ONNX Runtime library"
-    )
-  else()
-    add_custom_command(TARGET nd2-viewer POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "$<TARGET_FILE:onnxruntime::onnxruntime>"
-        "$<TARGET_FILE_DIR:nd2-viewer>"
-      COMMENT "Copying ONNX Runtime library"
-    )
-    install(FILES "$<TARGET_FILE:onnxruntime::onnxruntime>"
-      DESTINATION "."
-      COMPONENT Runtime
-    )
-  endif()
 endif()
 
 if(APPLE)
@@ -512,22 +452,6 @@ if(UNIX AND NOT APPLE AND ND2VIEWER_USE_SHARED_SDK)
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/linux-ensure-libtiff5.cmake"
     COMMENT "Symlink libtiff.so.5 for Nikon liblimfile (microscopy-metadata-query)"
   )
-endif()
-
-if(ND2VIEWER_DEBCR_MODEL_PATH AND EXISTS "${ND2VIEWER_DEBCR_MODEL_PATH}")
-  if(APPLE)
-    install(FILES "${ND2VIEWER_DEBCR_MODEL_PATH}"
-      DESTINATION "nd2-viewer.app/Contents/Resources/models"
-      RENAME "debcr_LM_2D_CARE.onnx"
-      COMPONENT Runtime
-    )
-  else()
-    install(FILES "${ND2VIEWER_DEBCR_MODEL_PATH}"
-      DESTINATION "models"
-      RENAME "debcr_LM_2D_CARE.onnx"
-      COMPONENT Runtime
-    )
-  endif()
 endif()
 
 if(WIN32)

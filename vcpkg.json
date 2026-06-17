@@ -2,37 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "dependencies": [
     "itk",
-    {
-      "name": "qtbase",
-      "default-features": false,
-      "features": [
-        "concurrent",
-        "gui",
-        "opengl",
-        "png",
-        "widgets"
-      ],
-      "platform": "!linux"
-    },
-    {
-      "name": "qtbase",
-      "default-features": false,
-      "features": [
-        "concurrent",
-        "fontconfig",
-        "freetype",
-        "gui",
-        "harfbuzz",
-        "opengl",
-        "png",
-        "widgets",
-        "xcb",
-        "xcb-sm",
-        "xcb-xlib",
-        "xrender"
-      ],
-      "platform": "linux"
-    },
+    "qtbase",
     "qtmultimedia",
     "qtsvg",
     {
